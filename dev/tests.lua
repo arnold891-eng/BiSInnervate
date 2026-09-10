@@ -1949,14 +1949,14 @@ do
     local w = rezRaid()
     local m = w.clients.Kumlust
     local lib = m.env.LibBiSComm
-    ok(lib ~= nil and lib.MINOR == 3, "LibBiSComm is embedded, minor 3", lib and lib.MINOR)
+    ok(lib ~= nil and lib.MINOR == 4, "LibBiSComm is embedded, minor 4", lib and lib.MINOR)
     ok(lib._booted == true, "it boots from PLAYER_LOGIN")
     local tocVer = m.env.GetAddOnMetadata("BiSInnervate", "Version")
     ok(lib.addons and lib.addons.BiSInnervate == tocVer, "the addon is registered with the TOC's version, not a literal", lib.addons and lib.addons.BiSInnervate, tocVer)
     ok(m.NS.VERSION == tocVer, "and NS.VERSION is that same number", m.NS.VERSION)
     -- two pipes, disjoint: the lib's BiS / proto 1 next to Innervate's BiSInn / proto 4
     ok(lib.PREFIX == "BiS" and m.NS.PREFIX == "BiSInn" and lib.PROTO == 1 and m.NS.PROTOCOL == 4, "the prefixes and protocols are disjoint", lib.PREFIX, m.NS.PREFIX)
-    ok(m.env.SLASH_BISCOMM1 == "/bis" and m.env.SLASH_BISINNERVATE1 ~= "/bis", "/bis is the lib's, /inn stays Innervate's")
+    ok(m.env.SLASH_BISCOMM1 == "/biscomm" and m.env.SLASH_BISINNERVATE1 ~= "/biscomm", "/biscomm is the lib's (never /bis: that is LoonBestInSlot's), /inn stays Innervate's", m.env.SLASH_BISCOMM1)
     -- the lib is not inert: every client said HI on the BiS pipe at login,
     -- and Innervate's own HELLO traffic is still there beside it
     local his, hellos = 0, 0

@@ -9,10 +9,11 @@
   is the brand. Hover the prompt for who is online, shift-click prints them, drag moves the
   window - as before. Budget: 152 window - 64 (H and everything right of it) - 4 - 3 = 81
   clear, held at 76, so a long name trims with an ellipsis instead of running under H.
-- **The shared BiS channel** (`Libs\LibBiSComm-1.0`, prefix `BiS`, minor 3) rides alongside.
+- **The shared BiS channel** (`Libs\LibBiSComm-1.0`, prefix `BiS`, minor 4) rides alongside.
   Innervate's own `BiSInn` protocol-4 pipe is untouched. Carrying this addon now makes you a
   peer for any BiS summoner in the raid: a `HI` at login, a `WHERE` on a zone change, an
-  answer to a summon ASK. No heartbeat. `/bis` for status and the off switch, remembered in
+  answer to a summon ASK. No heartbeat. `/biscomm` for status and the off switch (`/bis` is
+  LoonBestInSlot's - lib minor 4 moved off it), remembered in
   `BiSInnervateDB.comm`. No Innervate setting can gate it (mutation-verified in the suite).
 - `NS.VERSION` is the TOC's, not a literal; the suite holds every version literal equal to it.
 - The harness loads the files the TOC lists, in the TOC's order, embedded libs included;
