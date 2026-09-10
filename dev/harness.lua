@@ -180,6 +180,9 @@ end
 
 function World:Login()
     for _, n in ipairs(self.order) do self:Fire(n, "PLAYER_LOGIN") end
+    -- the client follows PLAYER_LOGIN with PLAYER_ENTERING_WORLD; the shared
+    -- channel says HI from there, Innervate re-binds from it
+    for _, n in ipairs(self.order) do self:Fire(n, "PLAYER_ENTERING_WORLD") end
     self:Advance(3)
 end
 
@@ -627,6 +630,26 @@ function World:NewClient(name, class, hasAddon)
     env.GameTooltip = setmetatable({}, { __index = function() return function() end end })
     env.UIParent = { GetName = function() return "UIParent" end }
     env.STANDARD_TEXT_FONT = "Fonts\\FRIZQT__.TTF"
+    -- the TOC's metadata, the way the client hands it out: the version the
+    -- raid hears must be this one, never a literal
+    env.GetAddOnMetadata = function(addon, key)
+        local f = io.open(((world.rootFor and world.rootFor[name]) or world.root) .. "/BiSInnervate.toc", "r")
+        if not f then return nil end
+        local v
+        for line in f:lines() do
+            local val = line:match("^## " .. key .. ":%s*(.-)%s*$")
+            if val then v = val end
+        end
+        f:close()
+        return v
+    end
+    -- what the shared channel reads about the client's own place in the world
+    env.IsInInstance = function() return false, "none" end
+    env.GetInstanceInfo = function() return "Azeroth", "none", 0, "", 0, 0, false, 0, 0 end
+    env.GetRealZoneText = function() return world.zone or "Shattrath City" end
+    env.GetZoneText = env.GetRealZoneText
+    env.hooksecurefunc = function() end
+    env.ConfirmSummon = function() end
     env.SPELL_FAILED_OUT_OF_RANGE = "Out of range."
     env.SPELL_FAILED_NO_MANA = "Not enough mana"
     env.SPELL_FAILED_LINE_OF_SIGHT = "Target not in line of sight"
@@ -948,7 +971,9 @@ function World:NewClient(name, class, hasAddon)
                 UNIT_SPELLCAST_START=1, UNIT_SPELLCAST_STOP=1, UNIT_SPELLCAST_INTERRUPTED=1,
                 UNIT_SPELLCAST_FAILED=1, UI_ERROR_MESSAGE=1, SPELLS_CHANGED=1,
                 PLAYER_EQUIPMENT_CHANGED=1, PLAYER_DEAD=1, PLAYER_UNGHOST=1, PLAYER_ALIVE=1,
-                UPDATE_SHAPESHIFT_FORM=1,
+                UPDATE_SHAPESHIFT_FORM=1, PLAYER_LOGOUT=1,
+                -- the shared channel's (LibBiSComm)
+                ZONE_CHANGED_NEW_AREA=1, CONFIRM_SUMMON=1, CANCEL_SUMMON=1,
             }
             if not KNOWN[e] then error("unknown event: " .. tostring(e), 0) end
             self._events[e] = true

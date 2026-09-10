@@ -1944,11 +1944,74 @@ do
     ok(m.NS.MyHealerSpec() == nil, "a mage has no spec to read")
 end
 
+section("54. the shared BiS channel rides alongside, and nothing here can gate it")
+do
+    local w = rezRaid()
+    local m = w.clients.Kumlust
+    local lib = m.env.LibBiSComm
+    ok(lib ~= nil and lib.MINOR == 3, "LibBiSComm is embedded, minor 3", lib and lib.MINOR)
+    ok(lib._booted == true, "it boots from PLAYER_LOGIN")
+    local tocVer = m.env.GetAddOnMetadata("BiSInnervate", "Version")
+    ok(lib.addons and lib.addons.BiSInnervate == tocVer, "the addon is registered with the TOC's version, not a literal", lib.addons and lib.addons.BiSInnervate, tocVer)
+    ok(m.NS.VERSION == tocVer, "and NS.VERSION is that same number", m.NS.VERSION)
+    -- two pipes, disjoint: the lib's BiS / proto 1 next to Innervate's BiSInn / proto 4
+    ok(lib.PREFIX == "BiS" and m.NS.PREFIX == "BiSInn" and lib.PROTO == 1 and m.NS.PROTOCOL == 4, "the prefixes and protocols are disjoint", lib.PREFIX, m.NS.PREFIX)
+    ok(m.env.SLASH_BISCOMM1 == "/bis" and m.env.SLASH_BISINNERVATE1 ~= "/bis", "/bis is the lib's, /inn stays Innervate's")
+    -- the lib is not inert: every client said HI on the BiS pipe at login,
+    -- and Innervate's own HELLO traffic is still there beside it
+    local his, hellos = 0, 0
+    for _, msg in ipairs(w.addonMsgs) do
+        if msg.msg:find("^1|CORE|HI|") then his = his + 1 end
+        if msg.msg:find("^4|HELLO|") then hellos = hellos + 1 end
+    end
+    ok(his > 0, "HI went out on the shared pipe", his)
+    ok(hellos > 0, "and Innervate's HELLO still went out on its own", hellos)
+    -- peers: another Innervate client is a lib peer, from the lib's own HI, not from BiSInn
+    ok(lib:Peer("Healer1") ~= nil, "a raider with the addon is a lib peer", lib:Count())
+    ok(lib:Peer("Kumlust") == nil, "my own echo is not (minor 3)")
+    -- the wire is not confused: a BiS-pipe line never reaches Innervate's handlers
+    local before = m.NS.Comm.users.Nobody
+    w:Fire("Kumlust", "CHAT_MSG_ADDON", "BiS", "1|CORE|HI|3||0", "RAID", "Healer1")
+    ok(m.NS.Comm.users.Nobody == before, "a BiS line is not parsed by Innervate's Comm")
+    -- the off switch lives in BiSInnervateDB.comm; the lib obeys it and it survives a logout
+    lib:SetEnabled(true)
+    m.env.BiSInnervateDB.comm = false
+    m.NS.Shared.Boot()
+    ok(not lib:Enabled(), "BiSInnervateDB.comm=false boots the channel silent and deaf")
+    lib:SetEnabled(true)
+    w:Fire("Kumlust", "PLAYER_LOGOUT")
+    ok(m.env.BiSInnervateDB.comm == true, "PLAYER_LOGOUT writes the live switch back for next login", m.env.BiSInnervateDB.comm)
+    -- NO Innervate setting may gate the channel: flip every toggle and the lib stays on
+    lib:SetEnabled(true)
+    local gatedBy
+    for _, cmd in ipairs({ "mages", "healer", "sound", "minimap", "faces", "lock", "hide", "debug", "rez", "set healerOnly", "set magesOnly" }) do
+        slash(m, cmd)
+        if not lib:Enabled() then gatedBy = gatedBy or cmd end
+        slash(m, cmd)
+        lib:SetEnabled(true)            -- reset so one probe cannot mask the next
+    end
+    for _, key in ipairs({ "rez", "rezHeal", "rezDrink", "healerOnly", "magesOnly", "sound", "minimap", "hidden" }) do
+        m.env.BiSInnervateDB[key] = false
+        m.NS.Shared.Boot()
+        if not lib:Enabled() then gatedBy = gatedBy or ("db." .. key) end
+        lib:SetEnabled(true)
+    end
+    ok(gatedBy == nil, "no feature toggle touches the shared channel", gatedBy)
+    slash(m, "reset")
+    -- the summon events the lib registers are none of Innervate's (no collision)
+    local innervateFrames = 0
+    for _, fr in ipairs(m.frames) do
+        if fr._events and fr._events.CONFIRM_SUMMON and fr ~= lib._frame then innervateFrames = innervateFrames + 1 end
+    end
+    ok(innervateFrames == 0, "only the lib listens for CONFIRM_SUMMON")
+end
+
 section("17. hygiene")
 do
     local w = raid(BASE)
     local allow = { BiSInnervateDB = true, SLASH_BISINNERVATE1 = true, SLASH_BISINNERVATE2 = true, SLASH_BISINNERVATE3 = true,
-                    BiSTheme = true }      -- the embedded Console.lua installs the theme handle on purpose
+                    BiSTheme = true,          -- the embedded Console.lua installs the theme handle on purpose
+                    LibBiSComm = true, SLASH_BISCOMM1 = true }   -- the shared channel's guard global and its one slash
     local leaks = {}
     local c = w.clients.Healer3
     for k in pairs(c.env) do

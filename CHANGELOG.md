@@ -1,5 +1,24 @@
 # BiS Innervate
 
+## 3.3.6
+
+- **The title is the `BiS>` prompt** (the house header, `Libs\BiSTheme\Console.lua`). It
+  cycles the standing slots - `Innervate`, `N online` in green, what the window is doing
+  (`heal Dps10` in gold, `rez Healer2` in teal, `drink`) - with a fade between, and events
+  (`drums: War`, `Neb mode`) jump in over them for three seconds. The logo is gone: the prompt
+  is the brand. Hover the prompt for who is online, shift-click prints them, drag moves the
+  window - as before. Budget: 152 window - 64 (H and everything right of it) - 4 - 3 = 81
+  clear, held at 76, so a long name trims with an ellipsis instead of running under H.
+- **The shared BiS channel** (`Libs\LibBiSComm-1.0`, prefix `BiS`, minor 3) rides alongside.
+  Innervate's own `BiSInn` protocol-4 pipe is untouched. Carrying this addon now makes you a
+  peer for any BiS summoner in the raid: a `HI` at login, a `WHERE` on a zone change, an
+  answer to a summon ASK. No heartbeat. `/bis` for status and the off switch, remembered in
+  `BiSInnervateDB.comm`. No Innervate setting can gate it (mutation-verified in the suite).
+- `NS.VERSION` is the TOC's, not a literal; the suite holds every version literal equal to it.
+- The harness loads the files the TOC lists, in the TOC's order, embedded libs included;
+  `dev/theme.lua` runs the whole suite again under a wrong-on-purpose palette to prove the
+  theme is read per call. 561 checks, both ways.
+
 ## 3.3.5
 
 - **Druids are off the portrait grid.** Only mages and healers get a face: druids are the ones
