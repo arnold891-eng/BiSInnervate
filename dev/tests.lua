@@ -1,0 +1,1925 @@
+-- BiS Innervate 3.0 :: regression suite   (run: lua5.1 dev/tests.lua  from the addon folder)
+
+package.path = "./dev/?.lua;" .. package.path
+local H = dofile("./dev/harness.lua")
+
+local pass, fail = 0, 0
+local function ok(cond, label, extra)
+    if cond then
+        pass = pass + 1
+        print(string.format("  \27[32mPASS\27[0m %s", label))
+    else
+        fail = fail + 1
+        print(string.format("  \27[31mFAIL\27[0m %s %s", label, extra and ("- " .. tostring(extra)) or ""))
+    end
+end
+local function section(t) print("\n" .. t) end
+
+--------------------------------------------------------------------
+-- spec row: { name, class, hasAddon, mana, group, kind }
+local function raid(spec, dbFor)
+    local w = H.NewWorld(".")
+    for _, p in ipairs(spec) do
+        w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6])
+        if p[4] then w.mana[p[1]] = p[4] end
+    end
+    -- everyone here chose their mode already; section 53 covers the default
+    for _, n in ipairs(w.order) do local c = w.clients[n]; if c.env then c.env.BiSInnervateDB = { modeSet = true, dbVersion = 4 } end end
+    if dbFor then
+        for who, db in pairs(dbFor) do w.clients[who].env.BiSInnervateDB = db end
+    end
+    w:Login()
+    w:Advance(4)   -- HELLO exchange
+    return w
+end
+
+local BASE = {
+    { "Kumlust", "MAGE",   true, 12, 1 },
+    { "Barky",   "DRUID",  true, 90, 1 },
+    { "Treebo",  "DRUID",  true, 85, 2 },
+    { "Tankman", "WARRIOR", true, nil, 1 },
+    { "Healbot", "PRIEST", true, 60, 2 },
+    { "Shammy",  "SHAMAN", true, 70, 1, "TIDE" },
+    { "Enhance", "SHAMAN", true, 50, 2 },          -- no talent
+}
+
+local function face(c, name) return c.NS.Window.byName[name] end
+local function pulsing(b) return b and b.anim and b.anim:IsPlaying() end
+local function slash(c, s) c.env.SlashCmdList["BISINNERVATE"](s) end
+local function click(b, button)
+    local fn = b:GetScript("PostClick") or b:GetScript("OnClick")
+    fn(b, button or "LeftButton")
+end
+local function callFor(c, name) return c.NS.Calls:For(name, "INNERVATE") end
+
+--------------------------------------------------------------------
+section("1. everybody gets the same window")
+do
+    local w = raid(BASE)
+    local missing = {}
+    for _, n in ipairs(w.order) do
+        local c = w.clients[n]
+        if not (c.NS.Window.frame and c.NS.Window.tide and c.NS.Window.inn) then missing[#missing + 1] = n end
+    end
+    ok(#missing == 0, "one window, two buttons, on every client", table.concat(missing, ","))
+
+    local d = w.clients.Barky
+    local names = {}
+    for name in pairs(d.NS.Window.byName) do names[#names + 1] = name end
+    table.sort(names)
+    ok(table.concat(names, ",") == "Enhance,Healbot,Kumlust,Shammy",
+       "the grid is the mages and healers with the addon", table.concat(names, ","))
+    ok(face(d, "Tankman") == nil, "the warrior is not on it")
+    ok(face(d, "Barky") == nil and face(d, "Treebo") == nil, "and neither are the druids - they have their own")
+
+    local m = w.clients.Kumlust
+    local mnames = {}
+    for name in pairs(m.NS.Window.byName) do mnames[#mnames + 1] = name end
+    ok(#mnames == #names, "and the mage sees exactly the same faces", #mnames)
+end
+
+section("2. only a druid's faces are live")
+do
+    local w = raid(BASE)
+    local d, m = w.clients.Barky, w.clients.Kumlust
+    local df, mf = face(d, "Kumlust"), face(m, "Kumlust")
+    ok(df._attrs["*spell1"] == "Innervate" and df._attrs["*type1"] == "spell", "a druid's face casts Innervate")
+    ok(d.resolve(df._attrs.unit) == "Kumlust", "bound to the right player", tostring(df._attrs.unit))
+    ok(df._attrs.unit == "Kumlust", "by NAME, not by raid slot", tostring(df._attrs.unit))
+    ok(df._mouse == true, "and takes clicks")
+    ok(mf._attrs["*type1"] == nil and mf._attrs["*spell1"] == nil, "a mage's face carries no spell")
+    ok(mf._mouse == false, "and takes no clicks")
+    ok(mf.hover._mouse == true, "but still gives a tooltip")
+end
+
+section("3. the two buttons grey out for the right reasons")
+do
+    local w = raid(BASE)
+    local m, h, t, sh, en = w.clients.Kumlust, w.clients.Healbot, w.clients.Tankman, w.clients.Shammy, w.clients.Enhance
+    ok(m.NS.Calls:CanAsk("INNERVATE"), "a mage may ask for innervate (druids in the raid)")
+    ok(m.NS.Calls:CanAsk("TIDE"), "and for tide - the talented shaman is in group 1")
+    local okT, why = h.NS.Calls:CanAsk("TIDE")
+    ok(not okT, "the priest in group 2 cannot ask for tide", why)
+    ok(h.NS.Calls:CanAsk("INNERVATE"), "but can ask for innervate")
+    local okW, whyW = t.NS.Calls:CanAsk("INNERVATE")
+    ok(not okW, "the warrior can ask for nothing", whyW)
+    local okS, whyS = sh.NS.Calls:CanAsk("TIDE")
+    ok(not okS, "the tide shaman does not ask for tide - they drop it", whyS)
+    ok(sh.NS.Calls:CanAsk("INNERVATE"), "but may ask for innervate")
+    ok(en.NS.Calls:CanAsk("INNERVATE"), "the untalented shaman may ask for innervate")
+    local okE = en.NS.Calls:CanAsk("TIDE")
+    ok(not okE, "and not for tide (no talented shaman in group 2)")
+
+    -- a druid WITHOUT the addon does not light the button
+    local w2 = raid({ { "Kumlust", "MAGE", true, 12 }, { "Silent", "DRUID", false, 90 } })
+    local okN, whyN = w2.clients.Kumlust.NS.Calls:CanAsk("INNERVATE")
+    ok(not okN, "no druid with the addon = innervate greyed", whyN)
+end
+
+section("4. a call pulses on every screen")
+do
+    local w = raid(BASE)
+    local m = w.clients.Kumlust
+    slash(m, "")            -- /inn
+    w:Advance(1)
+    local seen = 0
+    for _, n in ipairs(w.order) do
+        if callFor(w.clients[n], "Kumlust") then seen = seen + 1 end
+    end
+    ok(seen == #w.order, "every client has the call", seen)
+    ok(pulsing(face(w.clients.Barky, "Kumlust")), "the mage's face pulses on the druid's screen")
+    ok(pulsing(face(w.clients.Treebo, "Kumlust")), "and on the other druid's")
+    ok(pulsing(face(w.clients.Healbot, "Kumlust")), "and on the priest's, so everyone can see who asked")
+    ok(not pulsing(face(w.clients.Barky, "Healbot")), "nobody else pulses")
+    ok(#w.clients.Barky.sounds > 0, "a druid heard it")
+    ok(#w.clients.Healbot.sounds == 0, "a priest did not")
+end
+
+section("5. the first click locks everyone else out")
+do
+    local w = raid(BASE)
+    local m, a, b = w.clients.Kumlust, w.clients.Barky, w.clients.Treebo
+    slash(m, "")
+    w:Advance(1)
+
+    click(face(a, "Kumlust"))          -- Barky clicks; the secure cast is on its way
+    w:Advance(0.5)
+    local ca, cb = callFor(a, "Kumlust"), callFor(b, "Kumlust")
+    ok(ca.claimedBy == "Barky", "Barky holds the claim on his own screen")
+    ok(cb.claimedBy == "Barky", "and on Treebo's")
+    ok(b.NS.Calls:IsLocked(cb), "Treebo is locked out")
+    ok(not pulsing(face(b, "Kumlust")), "the face stopped pulsing for Treebo")
+    ok(face(b, "Kumlust").lock:IsShown(), "and is greyed")
+    ok(not pulsing(face(a, "Kumlust")) and not face(a, "Kumlust").lock:IsShown(),
+       "for Barky it is solid - his")
+    ok(b.NS.Calls:Claim(cb) == false, "Treebo's own claim is refused")
+    ok(callFor(m, "Kumlust").claimedBy == "Barky", "the mage sees who is coming")
+    ok(m.NS.Window.inn.sub:GetText() == "Barky is on it", "and the button says so",
+       m.NS.Window.inn.sub:GetText())
+end
+
+section("6. the cast is what closes it")
+do
+    local w = raid(BASE)
+    local m, a, b = w.clients.Kumlust, w.clients.Barky, w.clients.Treebo
+    slash(m, "")
+    w:Advance(1)
+    click(face(a, "Kumlust"))
+    w:CastInnervate("Barky", "Kumlust")
+    w:Advance(1)
+    ok(callFor(a, "Kumlust") == nil, "done on the druid's screen")
+    ok(callFor(b, "Kumlust") == nil, "done on the other druid's")
+    ok(callFor(m, "Kumlust") == nil, "done on the mage's")
+    ok(not pulsing(face(b, "Kumlust")) and not face(b, "Kumlust").lock:IsShown(),
+       "the face is back to idle")
+    ok(w.clients.Barky.NS.Tracker:CooldownLeft("Barky", "INNERVATE") > 300, "and Barky is on cooldown")
+end
+
+section("7. a claim that never lands goes back to everyone")
+do
+    local w = raid(BASE)
+    local m, a, b = w.clients.Kumlust, w.clients.Barky, w.clients.Treebo
+    slash(m, "")
+    w:Advance(1)
+    click(face(a, "Kumlust"))
+    w:Advance(2)
+    ok(b.NS.Calls:IsLocked(callFor(b, "Kumlust")), "locked right after the click")
+    w:Advance(8)                        -- claimHold is 8
+    ok(not b.NS.Calls:IsLocked(callFor(b, "Kumlust")), "unlocked once the hold ran out")
+    ok(pulsing(face(b, "Kumlust")), "and pulsing again for the other druid")
+    ok(b.NS.Calls:Claim(callFor(b, "Kumlust")) == true, "who may now take it")
+end
+
+section("8. cancelling")
+do
+    local w = raid(BASE)
+    local m = w.clients.Kumlust
+    slash(m, "")
+    w:Advance(1)
+    click(m.NS.Window.inn, "RightButton")   -- insecure button: OnClick
+    w:Advance(1)
+    ok(callFor(w.clients.Barky, "Kumlust") == nil, "right-click on the button withdraws it everywhere")
+
+    -- asked at 85%: a deliberate call is not killed a tick later
+    w.mana.Kumlust = 85
+    slash(m, "")
+    w:Advance(3)
+    ok(callFor(m, "Kumlust") ~= nil, "a call made at 85% survives")
+    w.mana.Kumlust = 100
+    w:Advance(2)
+    ok(callFor(m, "Kumlust") == nil, "but a real recovery closes it")
+
+    -- and a call from 12% closes once they are topped up
+    w.mana.Kumlust = 12
+    slash(m, "")
+    w:Advance(1)
+    w.mana.Kumlust = 75
+    w:Advance(2)
+    ok(callFor(w.clients.Treebo, "Kumlust") == nil, "a low call closes once they are back up")
+
+    -- expiry
+    w.mana.Kumlust = 12
+    slash(m, "")
+    w:Advance(45)
+    ok(callFor(w.clients.Treebo, "Kumlust") == nil, "and an ignored call expires")
+end
+
+section("9. mana tide: group-scoped, the shaman drops it")
+do
+    local w = raid(BASE)
+    local m, sh, en = w.clients.Kumlust, w.clients.Shammy, w.clients.Enhance
+    slash(m, "tide")
+    w:Advance(1)
+    ok(sh.NS.Calls:TideForGroup(1) ~= nil, "the shaman's client has the group's call")
+    ok(pulsing(sh.NS.Window.tide) or sh.NS.Window.tide.glow:IsShown(), "and their totem button lights")
+    ok(sh.NS.Window.tide._attrs["*spell1"] == "Mana Tide Totem", "which really casts the totem")
+    ok(not en.NS.Window.tide.glow:IsShown(), "the untalented shaman's does not light")
+
+    -- the shaman clicks: the secure cast fires, PostClick claims for the group
+    -- a second asker in the same group does not make a second call
+    local w2ok, why = w.clients.Barky.NS.Calls:CanAsk("TIDE")
+    ok(not w2ok and why == "your group already asked", "one call per group", why)
+
+    click(sh.NS.Window.tide)
+    w:Advance(0.5)
+    ok(sh.NS.Calls:TideForGroup(1).claimedBy == "Shammy", "the group's call is claimed")
+    w:CastTide("Shammy")
+    w:Advance(1)
+    ok(sh.NS.Calls:TideForGroup(1) == nil, "the totem landing closes the call")
+    ok(m.NS.Calls:Mine("TIDE") == nil, "on the mage too")
+
+    -- and now the shaman is on cooldown: the mage's button says so instead of
+    -- looking like another one could be asked for
+    local okCd, whyCd, left = m.NS.Calls:CanAsk("TIDE")
+    ok(not okCd and string.find(whyCd, "back in", 1, true) and left > 200, "asking again is refused with the timer", whyCd)
+    m.NS.Window:DoRefresh()
+    ok(m.NS.Window.tide.icon:GetAlpha() < 1, "and the mage's tide icon is greyed")
+    ok(string.find(m.NS.Window.tide.right:GetText() or "", "m", 1, true) ~= nil, "with the minutes in the corner",
+       m.NS.Window.tide.right:GetText())
+end
+
+section("10. combat: nothing protected is touched")
+do
+    local w = raid(BASE)
+    local m, a, b = w.clients.Kumlust, w.clients.Barky, w.clients.Treebo
+    w:SetCombat(true)
+    local okRun, err = pcall(function()
+        slash(m, "")
+        w:Advance(1)
+        click(face(a, "Kumlust"))
+        w:Advance(1)
+        w:CastInnervate("Barky", "Kumlust")
+        slash(w.clients.Healbot, "")
+        w:Advance(1)
+        click(face(b, "Healbot"))
+        w:Advance(1)
+    end)
+    ok(okRun, "ask, claim, cast, ask, claim - all mid-fight, no protected call", err)
+    ok(callFor(a, "Kumlust") == nil, "the first landed")
+    ok(callFor(a, "Healbot").claimedBy == "Treebo", "the second is Treebo's")
+
+    -- the window must not open, close, move or rescale in combat
+    local shownBefore = a.NS.Window.frame._shown
+    slash(a, "hide")
+    ok(a.NS.Window.frame._shown == shownBefore and not a.NS.db.hidden, "closing is refused mid-fight")
+    slash(a, "scale 0.7")
+    ok(a.NS.Window.frame:GetScale() == 1 and a.NS.Window.scalePending, "a rescale waits")
+    w:SetCombat(false)
+    w:Advance(1)
+    ok(a.NS.Window.frame:GetScale() == 0.7, "and lands when the fight ends")
+end
+
+section("11. a raid slot renumbering mid-fight cannot re-aim a face")
+do
+    local w = raid({
+        { "Kumlust", "MAGE",  true, 12 },
+        { "Barky",   "DRUID", true, 90 },
+        { "Tankman", "WARRIOR", true },
+        { "Healbot", "PRIEST", true, 9 },
+        { "Bonker",  "WARRIOR", true },
+    })
+    local a = w.clients.Barky
+    local f = face(a, "Healbot")
+    w:SetCombat(true)
+    slash(w.clients.Healbot, "")
+    w:Advance(1)
+    w:RemovePlayer("Tankman")        -- Healbot moves from raid4 to raid3, Bonker takes raid4
+    w:Advance(1)
+    ok(a.resolve(f._attrs.unit) == "Healbot", "still aimed at Healbot", tostring(f._attrs.unit))
+    a.NS.Window:DoRefresh()
+    ok(a.resolve(f.punit) == "Healbot", "and the mana bar follows the same person", tostring(a.resolve(f.punit)))
+    ok(pulsing(f), "and it is still the one pulsing")
+    w:SetCombat(false)
+end
+
+section("12. the wire is defended")
+do
+    local w = raid(BASE)
+    local m, a = w.clients.Kumlust, w.clients.Barky
+    slash(m, "")
+    w:Advance(1)
+    local id = callFor(a, "Kumlust").id
+
+    w:Deliver("Rogueman", "Barky", "4|CANCEL|" .. id .. "|lol")
+    ok(callFor(a, "Kumlust") ~= nil, "a stranger outside the group is ignored")
+    w:Deliver("Tankman", "Barky", "4|CANCEL|" .. id .. "|lol")
+    ok(callFor(a, "Kumlust") ~= nil, "a raid member who is not the caller cannot cancel it")
+    w:Deliver("Tankman", "Barky", "4|CLAIM|" .. id .. "|Treebo")
+    ok(callFor(a, "Kumlust").claimedBy == nil, "nobody can claim on somebody else's behalf")
+    w:Deliver("Healbot", "Barky", "4|ASK|fake-1|INNERVATE|Kumlust|MAGE|5|1")
+    ok(callFor(a, "Kumlust").id == id, "you may only call for yourself")
+    w:Deliver("Treebo", "Barky", "2|REQ|old-1|Treebo|Kumlust|MAGE|5|INNERVATE")
+    local n = 0
+    for _ in pairs(a.NS.Calls.list) do n = n + 1 end
+    ok(n == 1, "a 2.x message is not parsed as a 3.0 one", n)
+end
+
+section("13. the demo")
+do
+    local w = raid({ { "Kumlust", "MAGE", true, 12 } })      -- a mage, solo
+    local c = w.clients.Kumlust
+    slash(c, "demo")
+    w:Advance(1)
+    ok(c.NS.demoMode == true, "demo is on")
+    ok(face(c, "Frostfingers") ~= nil, "fake faces are on the grid")
+    ok(face(c, "Frostfingers")._attrs["*type1"] == "macro" and face(c, "Frostfingers")._attrs["*macrotext1"] == "",
+       "wired to a do-nothing macro")
+    ok(pulsing(face(c, "Frostfingers")), "the caller pulses")
+    ok(face(c, "Emberly").lock:IsShown(), "the one another druid took is greyed")
+    ok(not pulsing(face(c, "Sparkle")), "the one not asking is quiet")
+    ok(c.NS.Window.frame:GetAlpha() == 1, "visible while solo")
+    local okClick = pcall(function() click(face(c, "Frostfingers")) end)
+    ok(okClick, "a click prints instead of casting")
+
+    w:SetCombat(true)
+    slash(c, "demo")
+    ok(c.NS.demoMode == true, "stopping mid-fight waits")
+    w:SetCombat(false)
+    w:Advance(1)
+    ok(not c.NS.demoMode, "and stops when it ends")
+    ok(face(c, "Frostfingers") == nil, "fake faces are gone")
+    local n = 0
+    for _, call in pairs(c.NS.Calls.list) do if call.demo then n = n + 1 end end
+    ok(n == 0, "and so are the fake calls")
+end
+
+section("14. the options window")
+do
+    local w = raid(BASE)
+    local c = w.clients.Barky
+    local C, db = c.NS.Config, c.env.BiSInnervateDB
+    local okB, err = pcall(function() C:Build() end)
+    ok(okB, "it builds", err)
+    slash(c, "config")
+    ok(C.frame:IsShown(), "/inn config opens it")
+    slash(c, "config")
+    ok(not C.frame:IsShown(), "and closes it")
+    for _, name in ipairs(C.PAGES) do
+        C:ShowTab(name)
+        local shown = 0
+        for _, p in pairs(C.pages) do if p:IsShown() then shown = shown + 1 end end
+        ok(shown == 1 and C.pages[name]:IsShown(), "tab " .. name .. " shows only its page")
+    end
+
+    C:Set("scale", 5)
+    ok(db.scale == 2, "scale clamps at 2", db.scale)
+    ok(c.NS.Window.frame:GetScale() == 2, "and the window actually resized")
+    C:Set("scale", 1)
+    C:Set("shown", false)
+    ok(db.hidden == true, "unticking shown is exactly the x", tostring(db.hidden))
+    ok(c.NS.Window.frame:GetAlpha() == 0, "window faded")
+    ok(face(c, "Kumlust")._mouse == false, "and its faces went deaf")
+    C:Set("shown", true)
+    ok(not db.hidden and face(c, "Kumlust")._mouse == true, "ticking it brings both back")
+    C:Set("voice", "off")
+    ok(db.voice == "off" and c.NS.Sound:ActivePack() == nil, "voice off")
+    C:Set("voice", "auto")
+    C:Set("classPALADIN", false)
+    ok(c.NS.IsRequesterClass("PALADIN") == false, "a class can be switched off")
+    C:Set("classPALADIN", true)
+    C:Set("claimHold", 1)
+    ok(db.claimHold == 3, "claimHold clamps to 3", db.claimHold)
+    C:Set("sound", false)
+    ok(db.sound == false, "sound off")
+    C:Set("sound", true)
+
+    -- the paint, not the call
+    local r = C.hx("b980ff")
+    C:ShowTab("Window")
+    ok(C.tabs.Window.label._color and math.abs(C.tabs.Window.label._color[1] - r) < 0.01,
+       "the active tab label is accent-coloured")
+end
+
+section("15. a saved scale survives a reload in the same place")
+do
+    local w = raid(BASE)
+    local c = w.clients.Barky
+    c.NS.Window.frame:SetPoint("CENTER", c.env.UIParent, "CENTER", 300, -120)
+    slash(c, "scale 0.5")
+    local _, _, _, x = c.NS.Window.frame:GetPoint()
+    ok(x == 600, "offsets rescaled once", tostring(x))
+    local saved = c.env.BiSInnervateDB
+    for i = 1, 3 do
+        local w2 = raid(BASE, { Barky = saved })
+        local f2 = w2.clients.Barky.NS.Window.frame
+        local _, _, _, xi = f2:GetPoint()
+        ok((xi or 0) * f2:GetScale() == 300, "reload " .. i .. " lands in the same pixel", tostring(xi))
+        saved = w2.clients.Barky.env.BiSInnervateDB
+    end
+end
+
+section("16. upgrading from 2.x")
+do
+    local old = { dbVersion = 3, showAt = 90, small = true, sound = false, hidePanel = true,
+                  gridHidden = true, roles = { Bob = { h = 1 } }, assignPos = { x = 1 }, whispers = true }
+    local w = raid(BASE, { Barky = old })
+    local db = w.clients.Barky.env.BiSInnervateDB
+    ok(db.dbVersion == 4, "schema is 4")
+    ok(db.scale == 0.5, "half size carried over as scale 0.5", tostring(db.scale))
+    ok(db.sound == false, "sound setting kept")
+    ok(db.showAt == nil and db.roles == nil and db.assignPos == nil and db.whispers == nil,
+       "the 2.x keys are gone")
+    ok(not db.hidden, "and the window is shown (old close flags do not carry)")
+end
+
+section("18. a zone-in blip does not empty the grid")
+do
+    local w = raid(BASE)
+    local d = w.clients.Barky
+    local before = 0
+    for _ in pairs(d.NS.Window.byName) do before = before + 1 end
+    ok(before == 4, "four faces before the zone", before)
+
+    -- the group API reports nobody for a moment, then the roster is back
+    w.blip = true
+    w:FireAll("PLAYER_ENTERING_WORLD")
+    w:FireAll("GROUP_ROSTER_UPDATE")
+    w:Advance(1)
+    w.blip = false
+    w:FireAll("GROUP_ROSTER_UPDATE")
+    w:Advance(0.5)
+
+    -- immediately: the blip must never have been believed
+    local after = 0
+    for _ in pairs(d.NS.Window.byName) do after = after + 1 end
+    ok(after == 4, "four faces the moment the roster is back - nothing was forgotten", after)
+
+    ok(true, "(recovery of a wiped client is section 18b)")
+    local users = 0
+    for _ in pairs(d.NS.Comm.users) do users = users + 1 end
+    ok(users == 6, "and everyone with the addon is still known", users)
+    ok(d.NS.Calls:CanAsk("INNERVATE") or d.NS.Tracker:HasDruid(), "the innervate button is still lit")
+
+    -- a real departure of everyone is still believed, eventually
+    w.blip = true
+    w:FireAll("GROUP_ROSTER_UPDATE")
+    w:Advance(12)
+    w:FireAll("GROUP_ROSTER_UPDATE")
+    w:Advance(1)
+    ok(not d.NS.Tracker:RosterBlip(), "ten seconds of nobody is not a blip any more")
+    w.blip = false
+end
+
+section("18b. a client that forgot everyone gets it all back from one hello")
+do
+    -- a fresh raid, no roster events in flight: the ONLY way back is that the
+    -- others answer a hello from somebody they already know
+    local w = raid(BASE)
+    local d = w.clients.Barky
+    d.NS.Comm.users = {}
+    d.NS.Tracker:UpdateRoster(); d.NS.Window:Bind()
+    local wiped = 0
+    for _ in pairs(d.NS.Window.byName) do wiped = wiped + 1 end
+    ok(wiped < 4, "a wiped client starts short", wiped)
+    d.NS.Comm:Hello()
+    w:Advance(8)
+    local back = 0
+    for _ in pairs(d.NS.Window.byName) do back = back + 1 end
+    ok(back == 4, "and is whole again after one hello - mages included", back)
+end
+
+section("19. a face the client cannot aim by name stays unbound")
+do
+    local w = H.NewWorld(".")
+    w.noNames = true                    -- a bare name is not a unit token here
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    w:Login(); w:Advance(4)
+    local d = w.clients.Barky
+    local f = face(d, "Kumlust")
+    ok(f ~= nil, "the face is on the grid")
+    ok(f._attrs["*spell1"] == nil and f._attrs.unit == "none", "but carries no spell and no unit", tostring(f._attrs.unit))
+    ok(f._mouse == false, "and takes no clicks - it cannot cast at the wrong person")
+    ok(f.unbound == true, "and says so")
+end
+
+section("20. a hidden window stays deaf across a roster change")
+do
+    local w = raid(BASE)
+    local m = w.clients.Kumlust
+    slash(m, "hide")
+    ok(face(m, "Healbot").hover._mouse == false, "hover frames off when closed")
+    w:FireAll("GROUP_ROSTER_UPDATE")
+    w:Advance(1)
+    ok(face(m, "Healbot").hover._mouse == false, "and still off after a roster update")
+    ok(m.NS.Window.inn._mouse == false, "buttons too")
+    slash(m, "show")
+    ok(face(m, "Healbot").hover._mouse == true and m.NS.Window.inn._mouse == true, "all back when shown")
+end
+
+section("21. a client that drops secure writes in combat: nothing is attempted")
+do
+    local w = raid(BASE)
+    w.blockSecureWrites = true
+    local m, a = w.clients.Kumlust, w.clients.Barky
+    w:SetCombat(true)
+    local okRun, err = pcall(function()
+        slash(m, ""); w:Advance(1)
+        click(face(a, "Kumlust")); w:Advance(1)
+        w:CastInnervate("Barky", "Kumlust")
+        slash(m, "tide"); w:Advance(1)
+        click(w.clients.Shammy.NS.Window.tide); w:CastTide("Shammy")
+        slash(a, "reset"); slash(a, "hide"); slash(a, "scale 0.8"); slash(a, "config")
+        slash(m, "lust"); slash(m, "drums battle")
+        w.clients.Healbot.NS.Window.buttons.DRUMS:GetScript("OnEnter")(w.clients.Healbot.NS.Window.buttons.DRUMS)
+        w.clients.Healbot.NS.Window:HideFlyout()
+        a.NS.Config:Set("sound", false); a.NS.Config:Set("scale", 1.2)
+        w:Advance(3)
+    end)
+    ok(okRun, "the whole flow survives a write-blocking client", err)
+    ok(face(a, "Kumlust")._attrs.unit == "Kumlust", "and no binding was touched")
+    ok(a.NS.Window.resetPending == true, "reset waited for the fight to end")
+    w:SetCombat(false)
+    w:Advance(1)
+    ok(not a.NS.Window.resetPending and a.NS.Window.inn._mouse == true, "and then happened")
+end
+
+section("22. a claim that arrives before its ask still locks")
+do
+    local w = raid(BASE)
+    local m, a, b = w.clients.Kumlust, w.clients.Barky, w.clients.Treebo
+    slash(m, ""); w:Advance(1)
+    local id = callFor(a, "Kumlust").id
+    -- Treebo never got the ASK
+    b.NS.Calls.list[id] = nil
+    w:Deliver("Barky", "Treebo", "4|CLAIM|" .. id .. "|Barky")
+    ok(callFor(b, "Kumlust") == nil, "no call yet on Treebo")
+    w:Deliver("Kumlust", "Treebo", "4|ASK|" .. id .. "|INNERVATE|Kumlust|MAGE|12|1")
+    local c = callFor(b, "Kumlust")
+    ok(c and c.claimedBy == "Barky", "the ask lands already claimed", c and tostring(c.claimedBy))
+    ok(b.NS.Calls:IsLocked(c), "and Treebo is locked out")
+end
+
+section("23. a shaman gaining the talent gets a totem button")
+do
+    local w = raid(BASE)
+    local en = w.clients.Enhance
+    ok(en.NS.Window.tide._attrs["*spell1"] == nil, "no talent, no spell on the button")
+    w.kinds.Enhance = "TIDE"
+    en.NS.ForgetSpellCache()
+    w:Fire("Enhance", "PLAYER_TALENT_UPDATE")
+    w:Advance(6)
+    ok(en.NS.Window.tide._attrs["*spell1"] == "Mana Tide Totem", "after respeccing, the button casts it")
+    ok(w.clients.Healbot.NS.Tracker:TideFor("Healbot") ~= nil, "and group 2 can now ask for tide")
+    w.kinds.Enhance = nil
+    en.NS.ForgetSpellCache()
+    w:Fire("Enhance", "PLAYER_TALENT_UPDATE")
+    ok(en.NS.Window.tide._attrs["*spell1"] == nil, "and loses it again on respec")
+end
+
+section("24. the mana strip is a strip")
+do
+    local w = raid(BASE)
+    local a = w.clients.Barky
+    a.NS.Window:DoRefresh()
+    local full, low = face(a, "Shammy").mana, face(a, "Kumlust").mana
+    ok(full._h == nil or full._h <= 3, "never taller than 3px")
+    ok((full._w or 0) > (low._w or 0), "wider for more mana", tostring(full._w) .. " vs " .. tostring(low._w))
+end
+
+section("25. buttons are actions, not settings")
+do
+    local w = raid(BASE)
+    local C = w.clients.Barky.NS.Config
+    C:Build()
+    ok(C.controls.reset == nil and C.controls.demo == nil, "reset and demo are not in the control list")
+    ok(C:Set("reset", true) == false, "so ConfigSet cannot fire them")
+    ok(C.actions and C.actions.reset ~= nil, "they live under actions")
+end
+
+section("26. it stays small")
+do
+    local w = raid(BASE)
+    local W = w.clients.Barky.NS.Window
+    ok(W.width <= 160, "narrow enough to live on a raid screen", W.width)
+    ok(W.SIZE == 20, "faces are 20px", W.SIZE)
+    ok(W.BODY_A <= 0.05 and W.HEAD_A == 0.5, "body all but transparent, title bar half")
+    ok(not W.inn.title:IsShown() and not W.inn.sub:IsShown(), "no words on the buttons")
+    ok(W.inn.sub:GetText() ~= nil, "but the tooltip still has them")
+end
+
+section("27. bloodlust: any shaman in your group, greyed while exhausted")
+do
+    local w = raid(BASE)
+    local m, sh, en, h = w.clients.Kumlust, w.clients.Shammy, w.clients.Enhance, w.clients.Healbot
+    ok(sh.NS.Provides("LUST") and en.NS.Provides("LUST"), "every shaman provides bloodlust")
+    ok(sh.NS.Provides("TIDE") and not en.NS.Provides("TIDE"), "and only the talented one provides tide")
+    ok(sh.NS.Window.lust._attrs["*spell1"] == "Bloodlust", "the shaman's lust button casts it",
+       tostring(sh.NS.Window.lust._attrs["*spell1"]))
+    ok(m.NS.Calls:CanAsk("LUST"), "the mage can ask")
+    ok(h.NS.Calls:CanAsk("LUST"), "the priest in group 2 can ask too - bloodlust is raid-wide")
+    ok(w.clients.Tankman.NS.Calls:CanAsk("LUST"), "and so can the warrior - lust is for everyone")
+
+    slash(m, "lust"); w:Advance(1)
+    ok(sh.NS.Calls:GroupCall("LUST", 1) ~= nil, "Shammy's client has the call")
+    ok(sh.NS.Window.lust.glow:IsShown(), "and the button lights")
+    ok(en.NS.Window.lust.glow:IsShown(), "Enhance in group 2 lights too - any shaman may answer")
+    local okTwo, whyTwo = h.NS.Calls:CanAsk("LUST")
+    ok(not okTwo and whyTwo == "someone already asked", "one bloodlust call for the whole raid", whyTwo)
+    click(sh.NS.Window.lust); w:Advance(0.5)
+    ok(sh.NS.Calls:GroupCall("LUST", 1).claimedBy == "Shammy", "the click claims it")
+    ok(en.NS.Calls:IsLocked(en.NS.Calls:GroupCall("LUST", 2)), "and Enhance is locked out")
+    ok(not en.NS.Window.lust.glow:IsShown(), "his button stops pulsing")
+    w:CastLust("Shammy"); w:Advance(1)
+    ok(m.NS.Calls:Mine("LUST") == nil, "the cast closes it")
+    ok(en.NS.Calls:GroupCall("LUST", 2) == nil, "for everyone")
+
+    -- exhausted: asking is pointless, and the button says so
+    w.debuffs = { Kumlust = { [57723] = 185 } }        -- 3:05 of exhaustion left
+    local okE, why, left, reason = m.NS.Calls:CanAsk("LUST")
+    ok(not okE and string.find(why, "exhausted", 1, true), "an exhausted mage cannot ask", why)
+    ok(reason == "debuff" and left and left > 180, "and the reason carries the time left", tostring(left))
+    m.NS.Window:DoRefresh()
+    ok(m.NS.Window.lust.icon._alpha and m.NS.Window.lust.icon._alpha < 1, "and their lust icon is greyed")
+    ok(string.find(m.NS.Window.lust.right:GetText() or "", "4m", 1, true) ~= nil, "with the debuff's minutes in the corner",
+       m.NS.Window.lust.right:GetText())
+    w.debuffs = { Shammy = { [57724] = true } }        -- sated shaman
+    sh.NS.Window:DoRefresh()
+    ok(sh.NS.Window.lust.icon._alpha and sh.NS.Window.lust.icon._alpha < 1, "a sated shaman's own button greys too")
+    w.debuffs = nil
+end
+
+section("28. drums: whoever in your group carries them")
+do
+    local w = H.NewWorld(".")
+    w.drums = { Kumlust = 29529 }                      -- the mage is the leatherworker
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    w:Login(); w:Advance(4)
+    local m, sh, h = w.clients.Kumlust, w.clients.Shammy, w.clients.Healbot
+    ok(m.NS.Provides("DRUMS"), "the mage with drums in the bag provides drums")
+    ok(m.NS.Window.drums._attrs["*type1"] == "item" and m.NS.Window.drums._attrs["*item1"] == "item:29529",
+       "their drums button uses the item", tostring(m.NS.Window.drums._attrs["*item1"]))
+    ok(sh.NS.Calls:CanAsk("DRUMS"), "the shaman in group 1 can ask for drums")
+    local okH, why = h.NS.Calls:CanAsk("DRUMS")
+    ok(not okH, "the priest in group 2 cannot - nobody there has drums", why)
+
+    slash(sh, "drums"); w:Advance(1)
+    ok(m.NS.Window.drums.glow:IsShown(), "the drummer's button lights")
+    click(m.NS.Window.drums); w:CastDrums("Kumlust"); w:Advance(1)
+    ok(sh.NS.Calls:Mine("DRUMS") == nil, "the drum cast closes it")
+    ok(m.NS.Tracker:CooldownLeft("Kumlust", "DRUMS") > 100, "and the drums are on cooldown")
+
+    -- tinnitus greys it
+    w.debuffs = { Shammy = { [51120] = true } }
+    local okT, whyT = sh.NS.Calls:CanAsk("DRUMS")
+    ok(not okT and string.find(whyT, "tinnitus", 1, true), "tinnitus: cannot ask", whyT)
+    w.debuffs = nil
+
+    -- selling the drums takes the button away from everyone
+    w.drums = {}
+    w:Fire("Kumlust", "BAG_UPDATE"); w:Advance(3)
+    ok(not m.NS.Provides("DRUMS"), "no drums, no provider")
+    ok(m.NS.Window.drums._attrs["*type1"] == nil, "and the button is unwired")
+    local okS = sh.NS.Calls:CanAsk("DRUMS")
+    ok(not okS, "and the group can no longer ask")
+end
+
+section("29. five icons in a row")
+do
+    local w = raid(BASE)
+    local W = w.clients.Barky.NS.Window
+    ok(W.buttons.TIDE and W.buttons.INNERVATE and W.buttons.LUST and W.buttons.DRUMS and W.buttons.REZ, "all five exist")
+    ok(W.width >= W.PAD * 2 + 5 * W.BTN_H + 4 * W.GAP, "and fit across the window", W.width)
+    local _, _, _, rx = W.buttons.REZ:GetPoint()
+    ok(rx + W.BTN_H <= W.width - W.PAD, "the fifth does not hang out of the frame", rx)
+end
+
+section("30. a specific drum: the flyout, the wire, the right drummer")
+do
+    local w = H.NewWorld(".")
+    w.drums = { Kumlust = 29529, Barky = 29531 }       -- mage: Battle. druid: Restoration (both group 1)
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    w:Login(); w:Advance(4)
+    local m, d, sh = w.clients.Kumlust, w.clients.Barky, w.clients.Shammy
+
+    -- the shaman (no drums) hovers the drum button: five types unfold
+    sh.NS.Window.buttons.DRUMS:GetScript("OnEnter")(sh.NS.Window.buttons.DRUMS)
+    local fly = sh.NS.Window.flyout
+    ok(fly and fly:IsShown(), "the flyout opens on hover")
+    ok(fly.items.BATTLE and fly.items.PANIC, "with all five drums")
+    ok(fly.items.BATTLE.icon:GetAlpha() == 1, "Battle is lit - Kumlust has it")
+    ok(fly.items.RESTORATION.icon:GetAlpha() == 1, "Restoration is lit - Barky has it")
+    ok(fly.items.PANIC.icon:GetAlpha() < 1, "Panic is greyed - nobody has it")
+    -- the drummer hovers too: their secure kit unrolls, with the bound one marked
+    local mk = m.NS.Window.kit
+    m.NS.Window.buttons.DRUMS:GetScript("OnEnter")(m.NS.Window.buttons.DRUMS)
+    ok(mk and mk.items.BATTLE:IsShown() and mk.items.PANIC:IsShown(), "a drummer's hover unrolls the kit (no insecure flyout)")
+    ok(m.NS.Window.flyout == nil, "the asker flyout is never built for a drummer")
+    ok(mk.items.BATTLE.icon:GetAlpha() == 1 and mk.items.WAR.icon:GetAlpha() < 1, "carried drums lit, others greyed")
+    ok(mk.items.BATTLE._attrs["*macrotext1"] == "/use [combat] item:29529" and mk.items.WAR._attrs["*macrotext1"] == nil,
+       "a carried drum is bound, in combat only; an uncarried one is bound to nothing", tostring(mk.items.BATTLE._attrs["*macrotext1"]))
+    ok(m.NS.Window.buttons.DRUMS.drumType == "BATTLE", "the button is bound to Battle")
+    ok(m.NS.Window.buttons.DRUMS.tag:GetText() == "B", "and wears the letter")
+    w.mouseOver = nil
+    m.NS.Window.buttons.DRUMS:GetScript("OnLeave")(m.NS.Window.buttons.DRUMS)
+    ok(not mk.items.BATTLE:IsShown(), "and rolls back in when the mouse leaves")
+
+    -- ask for Restoration in particular
+    fly.items.RESTORATION:GetScript("OnClick")(fly.items.RESTORATION)
+    w:Advance(1)
+    local c = sh.NS.Calls:GroupCall("DRUMS", 1)
+    ok(c and c.variant == "RESTORATION", "the call carries the type", c and tostring(c.variant))
+    ok(d.NS.Window.buttons.DRUMS.glow:IsShown(), "Barky's button lights - he has Restoration")
+    ok(not m.NS.Window.buttons.DRUMS.glow:IsShown(), "Kumlust's does not - Battle is not what was asked")
+    ok(d.NS.Window.buttons.DRUMS._attrs["*item1"] == "item:29531", "and Barky's button is bound to that drum")
+
+    -- Kumlust drumming Battle does not close a Restoration call; Barky does
+    w:CastDrums("Kumlust"); w:Advance(1)
+    ok(sh.NS.Calls:GroupCall("DRUMS", 1) ~= nil, "a Battle drum does not answer a Restoration call")
+    w._clog = nil
+    w:Cast("DRUMS", "Barky", "Barky")
+    -- the harness casts spell 35476 (Battle) by default; hand it the Restoration spell name instead
+    w._clog = { nil, "SPELL_CAST_SUCCESS", false, "GUID-Barky", "Barky", 0, 0, "GUID-Barky", "Barky", 0, 0, 999999, "Greater Drums of Restoration", 8 }
+    w:FireAll("COMBAT_LOG_EVENT_UNFILTERED"); w:Advance(1)
+    ok(sh.NS.Calls:GroupCall("DRUMS", 1) == nil, "Greater Drums of Restoration, by name, closes it")
+
+    -- and a plain click on the drum button asks for any (once a drum is back up)
+    w:Advance(125)
+    slash(sh, "drums"); w:Advance(1)
+    local any = sh.NS.Calls:GroupCall("DRUMS", 1)
+    ok(any and any.variant == nil, "a plain click asks for any drum")
+    ok(m.NS.Window.buttons.DRUMS.glow:IsShown() or m.NS.Tracker:CooldownLeft("Kumlust", "DRUMS") > 0,
+       "any drummer may answer it")
+end
+
+section("31. the drum flyout unfolds the way you asked")
+do
+    local w = raid(BASE)
+    local c = w.clients.Healbot
+    local W = c.NS.Window
+    W:BuildFlyout()
+    local point, rel, relPoint = W.flyout:GetPoint()
+    ok(point == "BOTTOM" and relPoint == "TOP", "up by default", tostring(point))
+    c.NS.Config:Set("flyoutDir", "down")
+    point, rel, relPoint = W.flyout:GetPoint()
+    ok(point == "TOP" and relPoint == "BOTTOM", "down when asked", tostring(point))
+    ok(c.env.BiSInnervateDB.flyoutDir == "down", "and it is saved")
+    c.NS.Config:Set("flyoutDir", "up")
+end
+
+section("32. a 25-man, in combat, everything at once")
+do
+    -- 5 groups of 5: a shaman in every group (three talented), three druids,
+    -- two drummers, the rest mana users and melee. Combat the whole time, on
+    -- a client that drops secure writes.
+    local spec = {}
+    local classes = { "SHAMAN", "MAGE", "PRIEST", "WARRIOR", "DRUID" }
+    for g = 1, 5 do
+        for i, cls in ipairs(classes) do
+            local name = cls:sub(1, 2) .. g .. i
+            local kind = (cls == "SHAMAN" and g <= 3) and "TIDE" or nil
+            if cls == "DRUID" and g > 3 then cls = "ROGUE" end
+            spec[#spec + 1] = { name, cls, true, (cls == "MAGE") and 15 or 80, g, kind }
+        end
+    end
+    local w = H.NewWorld(".")
+    w.drums = { MA12 = 29529, WA44 = 29531 }        -- group 1's mage has Battle, group 4's warrior Restoration
+    for _, p in ipairs(spec) do w:AddPlayer(p[1], p[2], p[3], p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    for _, n in ipairs(w.order) do local c = w.clients[n]; if c.env then c.env.BiSInnervateDB = { modeSet = true, dbVersion = 4 } end end
+    w:Login(); w:Advance(5)
+    w.blockSecureWrites = true
+
+    local anyDruid = w.clients.DR15
+    local faces = 0
+    for _ in pairs(anyDruid.NS.Window.byName) do faces = faces + 1 end
+    ok(faces == 15, "a druid's grid holds every mage and healer with the addon (5 shamans, 5 mages, 5 priests; not the druids)", faces)
+    ok(w.clients.WA14.NS.Window.frame ~= nil, "a warrior has the window too")
+
+    w:SetCombat(true)
+    local okRun, err = pcall(function()
+        -- three mages call for innervate, three druids each grab one
+        slash(w.clients.MA12, ""); slash(w.clients.MA22, ""); slash(w.clients.MA32, ""); w:Advance(1)
+        click(face(w.clients.DR15, "MA12")); click(face(w.clients.DR25, "MA22")); click(face(w.clients.DR35, "MA32"))
+        w:Advance(0.5)
+        -- group 2 wants tide; group 5 wants tide but has no talented shaman
+        slash(w.clients.PR23, "tide"); slash(w.clients.PR53, "tide"); w:Advance(1)
+        -- the warrior in group 4 wants bloodlust: every shaman sees it
+        slash(w.clients.WA44, "lust"); w:Advance(1)
+        -- a priest in group 1 wants any drum; a priest in group 4 wants Restoration
+        slash(w.clients.PR13, "drums"); slash(w.clients.PR43, "drums restoration"); w:Advance(1)
+        -- hover the flyout, get a debuff, change bags, respec - all mid-fight
+        w.clients.WA24.NS.Window.buttons.DRUMS:GetScript("OnEnter")(w.clients.WA24.NS.Window.buttons.DRUMS)
+        w.debuffs = { WA44 = { [57723] = true } }
+        w:Fire("WA44", "UNIT_AURA", "player")
+        w:Fire("MA12", "BAG_UPDATE")
+        w:Fire("SH41", "PLAYER_TALENT_UPDATE")
+        w:Advance(2)
+    end)
+    ok(okRun, "no protected call anywhere in that", err)
+
+    ok(callFor(w.clients.DR15, "MA12").claimedBy == "DR15" and callFor(w.clients.DR15, "MA22").claimedBy == "DR25"
+       and callFor(w.clients.DR15, "MA32").claimedBy == "DR35", "three innervates, three different druids")
+    ok(w.clients.DR15.NS.Calls:IsLocked(callFor(w.clients.DR15, "MA22")), "and each druid is locked out of the others")
+
+    ok(w.clients.SH21.NS.Window.tide.glow:IsShown(), "group 2's shaman sees the tide call")
+    ok(not w.clients.SH11.NS.Window.tide.glow:IsShown(), "group 1's does not")
+    ok(w.clients.PR53.NS.Calls:Mine("TIDE") == nil, "group 5 could not ask - no talented shaman there")
+
+    local lit = 0
+    for g = 1, 5 do if w.clients["SH" .. g .. "1"].NS.Window.lust.glow:IsShown() then lit = lit + 1 end end
+    ok(lit == 5, "all five shamans see the bloodlust call", lit)
+    click(w.clients.SH31.NS.Window.lust); w:Advance(0.5)
+    lit = 0
+    for g = 1, 5 do if w.clients["SH" .. g .. "1"].NS.Window.lust.glow:IsShown() then lit = lit + 1 end end
+    ok(lit == 0, "one click and the other four go dark - and the clicker's is solid, not pulsing", lit)
+    w:CastLust("SH31"); w:Advance(1)
+    ok(w.clients.WA44.NS.Calls:Mine("LUST") == nil, "the cast closes it for the raid")
+
+    ok(w.clients.MA12.NS.Window.buttons.DRUMS.glow:IsShown(), "group 1's drummer lights for 'any'")
+    ok(w.clients.WA44.NS.Window.buttons.DRUMS.glow:IsShown(), "group 4's drummer lights for Restoration - he has it")
+    w:SetCombat(false)
+    w:Advance(1)
+    ok(w.clients.MA12.NS.Window.buttons.DRUMS._attrs["*item1"] == "item:29529", "bindings intact after the fight")
+end
+
+section("33. a drummer with two drums picks which one the button uses")
+do
+    local w = raid(BASE)
+    -- give Kumlust Battle now, then War as well via the bag scan fallback path
+    w.drums = { Kumlust = 29529 }
+    w:Fire("Kumlust", "BAG_UPDATE"); w:Advance(2)
+    local m = w.clients.Kumlust
+    ok(m.NS.Window.buttons.DRUMS.drumType == "BATTLE", "starts on the best drum")
+    -- pretend the bag also holds War: the harness fallback only knows one item, so stub MyDrums
+    local real = m.NS.MyDrums
+    m.NS.MyDrums = function() return { BATTLE = 29529, WAR = 29528 } end
+    local kit = m.NS.Window.kit
+    m.NS.Window.buttons.DRUMS:GetScript("OnEnter")(m.NS.Window.buttons.DRUMS)
+    ok(kit.items.WAR:IsShown(), "the kit unrolls")
+    click(kit.items.WAR)                 -- out of combat: the click sets the default (the macro is [combat] only)
+    ok(m.NS.Window.buttons.DRUMS._attrs["*item1"] == "item:29528", "picking War rebinds the button", tostring(m.NS.Window.buttons.DRUMS._attrs["*item1"]))
+    ok(m.NS.Window.buttons.DRUMS.tag:GetText() == "W", "and the letter follows")
+    ok(not kit.items.WAR:IsShown(), "and the kit rolls back in after the pick")
+    -- mid-fight the pick waits
+    w:SetCombat(true)
+    m.NS.Window:PickDrum("BATTLE")
+    ok(m.NS.Window.buttons.DRUMS._attrs["*item1"] == "item:29528", "in combat the binding does not move")
+    w:SetCombat(false); w:Advance(1)
+    ok(m.NS.Window.buttons.DRUMS._attrs["*item1"] == "item:29529", "and lands when the fight ends")
+    -- a specific group call still wins over the pick
+    m.NS.Window:PickDrum("WAR")
+    slash(w.clients.Shammy, "drums battle"); w:Advance(1)
+    ok(m.NS.Window.buttons.DRUMS._attrs["*item1"] == "item:29529", "a call for Battle overrides the pick")
+    m.NS.MyDrums = real
+end
+
+section("33b. mid-fight the group wants a drum the button does not hold")
+do
+    local w = raid(BASE)
+    w.drums = { Kumlust = 29529 }
+    w:Fire("Kumlust", "BAG_UPDATE"); w:Advance(2)
+    local m, sh = w.clients.Kumlust, w.clients.Shammy
+    local real = m.NS.MyDrums
+    m.NS.MyDrums = function() return { BATTLE = 29529, RESTORATION = 29531 } end
+    m.NS.Window:Bind(); m.NS.Comm:Hello(); w:Advance(2)      -- the raid learns about both drums
+    local kit, btn = m.NS.Window.kit, m.NS.Window.buttons.DRUMS
+    ok(btn.drumType == "BATTLE" and kit.items.RESTORATION._attrs["*macrotext1"] == "/use [combat] item:29531",
+       "button on Battle, Restoration bound in the kit for a fight")
+    w.blockSecureWrites = true
+    w:SetCombat(true)
+    local okRun, err = pcall(function()
+        slash(sh, "drums restoration"); w:Advance(1)
+        w.mouseOver = btn
+        btn:GetScript("OnEnter")(btn)                        -- the secure snippet unrolls it
+    end)
+    ok(okRun, "the ask and the hover mid-fight touch nothing protected", err)
+    ok(kit.items.RESTORATION:IsShown() and kit.items.PANIC:IsShown(), "the kit unrolled in combat")
+    ok(kit.items.RESTORATION.glow:IsShown() and kit.items.RESTORATION.anim:IsPlaying(), "Restoration - the one the group wants - pulses")
+    ok(not kit.items.BATTLE.glow:IsShown(), "Battle does not")
+    ok(btn._attrs["*item1"] == "item:29529", "the main button still holds Battle (it cannot be rebound in a fight)")
+    -- the drummer clicks it: the secure macro drums Restoration, PostClick claims the call
+    w.mouseOver = kit.items.RESTORATION
+    btn:GetScript("OnLeave")(btn)
+    ok(kit.items.RESTORATION:IsShown(), "moving from the button onto the kit keeps it open")
+    click(kit.items.RESTORATION); w:Advance(0.5)
+    local c = sh.NS.Calls:GroupCall("DRUMS", 1)
+    ok(c and c.claimedBy == "Kumlust", "the click claims the group's call", c and tostring(c.claimedBy))
+    ok(not kit.items.RESTORATION.glow:IsShown(), "and the pulse stops")
+    w.mouseOver = nil
+    kit.items.RESTORATION:GetScript("OnLeave")(kit.items.RESTORATION)
+    ok(not kit.items.RESTORATION:IsShown(), "leaving the kit rolls it back in - in combat, by the snippet")
+    w:SetCombat(false); w:Advance(1)
+    ok(btn._attrs["*item1"] == "item:29531", "fight over: the open Restoration call rebinds the main button")
+    m.NS.MyDrums = real
+end
+
+section("34. FojjiCore renamed its packs and dropped Brittney")
+do
+    local w = raid(BASE)
+    local c = w.clients.Barky
+    local S = c.NS.Sound
+    c.env.FojjiCore = {
+        voicePackOrder = { "Community - Nobody", "Community - Ripley" },
+        voicePacks = {
+            ["Community - Nobody"] = { ["Table"] = "x.ogg" },                 -- no innervate lines
+            ["Community - Ripley"] = { ["Fixate on You"] = "Interface\\AddOns\\FojjiCore\\voice\\r\\fixate.ogg" },
+        },
+    }
+    c.env.BiSInnervateDB.voice = "auto"
+    ok(S:ActivePack() == "Community - Ripley", "auto skips a pack without our lines", tostring(S:ActivePack()))
+    c.env.BiSInnervateDB.voice = "ripley"
+    ok(S:ActivePack() == "Community - Ripley", "a saved name still matches through the new prefix")
+    c.env.BiSInnervateDB.voice = "brittney"
+    ok(S:ActivePack() == nil, "a pack that is gone picks nothing (kit sounds play)")
+    c.env.FojjiCore.voicePacks["Community - Ripley"] = nil
+    c.env.BiSInnervateDB.voice = "auto"
+    ok(S:ActivePack() == "Community - Nobody", "no pack has the lines: first installed, never nil")
+    local played = {}
+    c.env.PlaySoundFile = function(p) played[#played + 1] = p; return false end
+    local kit = 0
+    c.env.PlaySound = function() kit = kit + 1 end
+    S:Play("someoneAsked")
+    ok(kit == 1, "a missing line falls back to the kit sound, no error")
+    c.env.FojjiCore = nil
+    c.env.BiSInnervateDB.voice = "auto"
+end
+
+section("35. Odiss mode: mages only, the window fits them")
+do
+    local w = raid(BASE)
+    w:AddPlayer("Frosty", "MAGE", true, 2); w:AddPlayer("Pyro", "MAGE", true, 2)
+    w:FireAll("GROUP_ROSTER_UPDATE"); w:Advance(4)
+    local c = w.clients.Barky
+    local W, f = c.NS.Window, c.NS.Window.frame
+    local SZ = W.SIZE + W.GAP
+    local function wide(n) return math.max(W.PAD * 2 + n * SZ - W.GAP, W.MINW_MAGES) end
+    local function tall(rows) return W.HEADER + W.PAD + rows * SZ - W.GAP + W.PAD end
+    local function shownBtns()
+        local n = 0
+        for _, b in pairs(W.buttons) do if b:IsShown() then n = n + 1 end end
+        return n
+    end
+    local fullW, fullH = f:GetWidth(), f:GetHeight()
+    ok(fullW == W.width and shownBtns() == 4 and not W.buttons.REZ:IsShown() and face(c, "Healbot") ~= nil,
+       "everyone: fixed width, four buttons (the rez one is off screen with nothing to do), the priest has a face")
+    f:SetPoint("TOPLEFT", c.env.UIParent, "TOPLEFT", 40, -40)
+
+    -- the M in the corner
+    click(W.magesBtn)
+    ok(c.env.BiSInnervateDB.magesOnly == true, "M turns Odiss mode on")
+    ok(W.magesBtn.lit == true and not W.cfgBtn:IsShown() and not W.title:IsShown(), "M lit, cfg and title gone from the bar")
+    ok(face(c, "Kumlust") and face(c, "Frosty") and face(c, "Pyro"), "three mage faces")
+    ok(face(c, "Healbot") == nil and face(c, "Shammy") == nil and face(c, "Barky") == nil, "nobody else")
+    ok(shownBtns() == 0, "no button row")
+    ok(f:GetWidth() == wide(3), "window is exactly three faces wide", f:GetWidth())
+    ok(f:GetHeight() == tall(1), "and one row tall", f:GetHeight())
+    local p1, _, _, x1, y1 = f:GetPoint()
+    ok(p1 == "TOPLEFT" and x1 == 40 and y1 == -40, "the anchor did not move")
+    local gp = { W.grid:GetPoint() }
+    ok(gp[5] == -W.PAD, "faces start right under the bar", gp[5])
+    -- faces are still live for the druid, in a row
+    local pyro = face(c, "Pyro")
+    ok(pyro._attrs["unit"] == "Pyro" and pyro._mouse == true, "a druid can still click a mage")
+    local _, _, _, px = pyro:GetPoint()
+    ok(px == 2 * SZ, "third face sits in the third column", px)
+
+    -- mages come and go: the window follows
+    w:AddPlayer("Arcane", "MAGE", true, 1); w:FireAll("GROUP_ROSTER_UPDATE"); w:Advance(4)
+    ok(f:GetWidth() == wide(4) and face(c, "Arcane") ~= nil, "a fourth mage joins: wider", f:GetWidth())
+    w:RemovePlayer("Arcane"); w:RemovePlayer("Pyro"); w:RemovePlayer("Frosty"); w:Advance(1)
+    ok(f:GetWidth() == W.MINW_MAGES and face(c, "Kumlust") ~= nil, "down to one mage: never narrower than the bar", f:GetWidth())
+    for i = 1, 8 do w:AddPlayer("Mage" .. i, "MAGE", true, (i % 5) + 1) end
+    w:FireAll("GROUP_ROSTER_UPDATE"); w:Advance(4)
+    ok(W.count == 9 and f:GetWidth() == wide(8) and f:GetHeight() == tall(2), "nine mages wrap to a second row", f:GetWidth() .. "x" .. f:GetHeight())
+    local last = face(c, "Mage8"); local _, _, _, lx, ly = last:GetPoint()   -- by name: Kumlust first, Mage8 ninth
+    ok(lx == 0 and ly == -SZ, "the ninth starts the second row", lx .. "," .. ly)
+
+    -- a call still pulses the face, and everyone else's window is unchanged
+    slash(w.clients.Kumlust, ""); w:Advance(1)
+    ok(pulsing(face(c, "Kumlust")), "a mage's call pulses in Odiss mode")
+    ok(w.clients.Treebo.NS.Window.frame:GetWidth() == W.width, "the other druid's window is untouched")
+
+    -- in combat: the setting flips, the bar repaints, the window waits
+    w:SetCombat(true)
+    local before = f:GetWidth()
+    click(W.magesBtn)
+    ok(c.env.BiSInnervateDB.magesOnly == false and W.magesBtn.lit == false, "M off mid-fight: saved and the bar repainted")
+    ok(f:GetWidth() == before and shownBtns() == 0, "but the window did not touch anything protected")
+    w:AddPlayer("Latemage", "MAGE", true, 3); w:FireAll("GROUP_ROSTER_UPDATE"); w:Advance(4)
+    ok(f:GetWidth() == before, "a mage joining mid-fight does not resize either")
+    w:SetCombat(false); w:Advance(1)
+    -- 4 originals + 8 mages + the late one = 13 faces, three rows of six
+    ok(f:GetWidth() == W.width and f:GetHeight() == fullH + 2 * SZ and shownBtns() == 4, "fight over: everyone is back, four buttons, full width", f:GetWidth() .. "x" .. f:GetHeight())
+    ok(face(c, "Healbot") ~= nil and face(c, "Latemage") ~= nil, "priest and the late mage both have faces")
+    ok(W.cfgBtn:IsShown() and W.title:IsShown(), "cfg and the title are back")
+    local gp2 = { W.grid:GetPoint() }
+    ok(gp2[5] == -(W.PAD + W.BTN_H + W.PAD), "faces sit under the button row again", gp2[5])
+
+    -- the option and the slash write the same key
+    local C = c.NS.Config
+    C:Set("magesOnly", true)
+    ok(C:Get("magesOnly") == true and shownBtns() == 0 and f:GetWidth() == wide(8) and f:GetHeight() == tall(2), "options tick: same thing, ten mages on two rows", f:GetWidth())
+    slash(c, "mages")
+    ok(C:Get("magesOnly") == false and shownBtns() == 4, "/inn mages: off again")
+    ok(W.frame:GetScale() == 1, "scale untouched by any of it")
+
+    -- the x: a closed window must not leave an invisible title bar behind
+    click(W.closeBtn)
+    ok(c.env.BiSInnervateDB.hidden == true and f:GetAlpha() == 0, "x closes it")
+    ok(W.magesBtn._mouse == false and W.cfgBtn._mouse == false and W.closeBtn._mouse == false and f._mouse == false,
+       "and nothing on the invisible bar takes the mouse")
+    slash(c, "show")
+    ok(W.magesBtn._mouse == true and f._mouse == true, "/inn show gives it back")
+    -- logging in with it closed
+    local w2 = raid(BASE, { Barky = { hidden = true, dbVersion = 4 } })
+    local W2 = w2.clients.Barky.NS.Window
+    ok(W2.frame:GetAlpha() == 0 and W2.closeBtn._mouse == false and W2.frame._mouse == false, "closed at login: bar deaf from the start")
+end
+
+--------------------------------------------------------------------
+-- the rez module (folded in from BiS Rez 3.0; its 161 checks live on here)
+--------------------------------------------------------------------
+
+local function rezBtn(c) return c.NS.Window.buttons.REZ end
+local function decision(c) return c.NS.Rez.last or c.NS.Rez:Decide() end
+-- a raid where the healers have real mana bars (the rez costs 1500)
+local function rezRaid(extra)
+    local w = H.NewWorld(".")
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    for _, p in ipairs(extra or {}) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]) end
+    w.manaMax = {}
+    for _, n in ipairs({ "Healbot", "Shammy", "Enhance", "Barky", "Treebo" }) do w.manaMax[n] = 10000; w.mana[n] = 8000 end
+    w.bags.Healbot = { 34062 }        -- a biscuit
+    for _, n in ipairs(w.order) do local c = w.clients[n]; if c.env then c.env.BiSInnervateDB = { modeSet = true, dbVersion = 4 } end end
+    w:Login(); w:Advance(4)
+    return w
+end
+
+section("36. the fifth button: a healer's rez, everyone else's 'rez me first'")
+do
+    local w = rezRaid()
+    local h, sh, d, m, t = w.clients.Healbot, w.clients.Shammy, w.clients.Barky, w.clients.Kumlust, w.clients.Tankman
+    ok(h.NS.Rez:Enabled() and sh.NS.Rez:Enabled() and d.NS.Rez:Enabled(), "priest, shaman and druid have the button")
+    ok(not m.NS.Rez:Enabled() and not t.NS.Rez:Enabled(), "mage and warrior do not")
+    ok(h.NS.Provides("REZ") and sh.NS.Provides("REZ"), "priest and shaman provide REZ")
+    ok(not d.NS.Provides("REZ"), "a druid does NOT - Rebirth is never in the rez table")
+    ok(h.NS.Rez:SpellName() == "Resurrection" and sh.NS.Rez:SpellName() == "Ancestral Spirit", "each class's own rez",
+       tostring(sh.NS.Rez:SpellName()))
+    local names = {}
+    for n in pairs(m.NS.Tracker.providers.REZ) do names[#names + 1] = n end
+    table.sort(names)
+    ok(table.concat(names, ",") == "Enhance,Healbot,Shammy", "the mage's client knows the three rezzers from HELLO", table.concat(names, ","))
+    ok(#m.NS.Rez:Rezzers() == 3 and m.NS.Rez:RezzersReady() == 3, "three standing, three ready")
+    local hello
+    for _, msg in ipairs(w.addonMsgs) do if msg.from == "Healbot" and string.find(msg.msg, "|HELLO|", 1, true) then hello = msg.msg end end
+    ok(hello and string.find(hello, "REZ", 1, true) and string.match(hello, "^4|"), "HELLO carries REZ on protocol 4", hello)
+    ok(rezBtn(h)._secure == true, "the button is secure")
+    ok(rezBtn(h)._attrs["*type1"] == "macro", "and carries a macro for the priest", tostring(rezBtn(h)._attrs["*type1"]))
+    ok(rezBtn(m)._attrs["*type1"] == nil and rezBtn(m)._attrs["*macrotext1"] == nil, "and nothing for the mage")
+    -- a druid still gets heal and drink
+    ok(decision(d).why and string.find(decision(d).why, "Rebirth", 1, true), "the druid's button says why it will not rez", decision(d).why)
+    -- everyone standing and healthy: the button is not on screen
+    local dh = decision(h)
+    ok(dh.action == nil and rezBtn(h)._attrs["*macrotext1"] == "" and not rezBtn(h):IsShown(), "idle: nothing to do, the button is off screen")
+    ok(w.drivers[rezBtn(h)] == "hide", "with its driver set to hide", tostring(w.drivers[rezBtn(h)]))
+    ok(not rezBtn(m):IsShown(), "the mage's is off screen too - he is alive")
+end
+
+section("37. rez order is a throughput order")
+do
+    local w = rezRaid()
+    local h = w.clients.Healbot
+    w.dead = { Kumlust = true, Shammy = true, Tankman = true }
+    w:Advance(1)
+    local d = decision(h)
+    ok(d.action == "rez" and d.target == "Shammy", "the shaman (a rezzer) goes before the mage and the warrior", tostring(d.target))
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Shammy,nocombat] Resurrection", "the macro aims by NAME", rezBtn(h)._attrs["*macrotext1"])
+    ok(h.NS.Window.title:GetText() and string.find(h.NS.Window.title:GetText(), "Shammy", 1, true), "and the title bar says who is next", h.NS.Window.title:GetText())
+    ok(rezBtn(h).glow:IsShown(), "the button pulses: there is a rez to do")
+    -- every standing rezzer dry: water beats another body
+    w.dead = { Kumlust = true, Tankman = true }
+    w.mana.Healbot, w.mana.Shammy, w.mana.Enhance = 2000, 2000, 2000
+    w:Advance(1)
+    ok(decision(h).target == "Kumlust", "with every rezzer dry, the mage goes first", tostring(decision(h).target))
+    -- no mana reading at all: never assume dry
+    w.dead = { Kumlust = true, Healbot = false, Shammy = true }
+    w.mana.Healbot, w.mana.Shammy, w.mana.Enhance = 8000, 8000, 8000
+    w:Advance(1)
+    ok(decision(h).target == "Shammy", "wet again: the rezzer is first", tostring(decision(h).target))
+    -- a released player sorts behind every body on the floor
+    w.dead = { Kumlust = true, Shammy = true }
+    w.ghost = { Shammy = true }
+    w:Advance(1)
+    ok(decision(h).target == "Kumlust", "a released shaman sorts behind the mage's body", tostring(decision(h).target))
+    w.ghost = {}
+    -- nobody dead: back to idle
+    w.dead = {}
+    w:Advance(1)
+    ok(decision(h).action ~= "rez", "no corpses, no rez")
+    -- a dead priest casts nothing
+    w.dead = { Healbot = true, Kumlust = true }
+    w:Advance(1)
+    ok(decision(h).action == nil and decision(h).why == "you are dead", "a dead priest is offered nothing, not even themself", tostring(decision(h).why))
+    w.dead = {}
+end
+
+section("38. a name the client cannot aim stays unaimed")
+do
+    local w = H.NewWorld(".")
+    w.noNames = true
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]) end
+    w.manaMax = { Healbot = 10000 }; w.mana.Healbot = 8000
+    w:Login(); w:Advance(4)
+    local h = w.clients.Healbot
+    w.dead = { Kumlust = true }
+    w:Advance(1)
+    local d = decision(h)
+    ok(d.target == "Kumlust" and d.action ~= "rez", "the corpse is known but the button does not rez it")
+    ok(string.find(rezBtn(h)._attrs["*macrotext1"] or "", "Kumlust", 1, true) == nil, "no macro aims at a name the client cannot resolve")
+    ok(d.why and string.find(d.why, "by name", 1, true), "and the tooltip says why", d.why)
+end
+
+section("39. the claim attaches when the cast starts, and everyone moves on")
+do
+    local w = rezRaid()
+    local h, sh = w.clients.Healbot, w.clients.Shammy
+    w.dead = { Kumlust = true, Tankman = true }
+    w:Advance(1)
+    ok(decision(h).target == "Kumlust" and decision(sh).target == "Kumlust", "both rezzers aim at the mage")
+    click(rezBtn(h))
+    w:Advance(0.2)
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == nil, "a click alone claims nothing (it may die on 'not enough mana')")
+    w:StartCast("Healbot", "Resurrection", "Kumlust", 10)
+    w:Advance(0.6)
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == "Healbot", "the cast starting claims the corpse on the shaman's client")
+    ok(decision(sh).target == "Tankman", "and the shaman's button moved to the next corpse at once", tostring(decision(sh).target))
+    ok(rezBtn(sh)._attrs["*macrotext1"] == "/cast [target=Tankman,nocombat] Ancestral Spirit", "with the macro rebound", rezBtn(sh)._attrs["*macrotext1"])
+    ok(sh.NS.Rez:RezzersReady() == 2, "a rezzer mid-cast is not counted ready", sh.NS.Rez:RezzersReady())
+    -- an unrelated interrupt of the priest's does not free it
+    w.addonMsgs = {}
+    w:Fire("Healbot", "UNIT_SPELLCAST_INTERRUPTED", "player", "x", 25449)
+    w:Fire("Healbot", "UNIT_SPELLCAST_STOP", "player", "x", 25449)
+    local freed = false
+    for _, m in ipairs(w.addonMsgs) do if string.find(m.msg, "|RFREE|", 1, true) then freed = true end end
+    ok(not freed and sh.NS.Rez:ClaimedBy("Kumlust") == "Healbot", "an unrelated spell ending does not release the claim")
+    -- the rez itself dying does
+    w:StopCast("Healbot", "UNIT_SPELLCAST_INTERRUPTED")
+    w:Advance(0.6)
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == nil, "interrupting the rez frees the corpse everywhere")
+    ok(decision(sh).target == "Kumlust", "and the shaman's button comes back to the mage", tostring(decision(sh).target))
+    -- landing it
+    click(rezBtn(sh)); w:StartCast("Shammy", "Ancestral Spirit", "Kumlust", 10); w:Advance(0.6)
+    w:CastRez("Shammy", "Kumlust")
+    ok(h.NS.Rez:RecentlyRezzed("Kumlust"), "the priest's client knows the mage has a rez incoming")
+    ok(decision(h).target == "Tankman", "and moves on to the warrior", tostring(decision(h).target))
+    ok(w.clients.Kumlust.NS.db.rezScores.Shammy == 1, "the shaman scored one on everyone's board")
+    w.dead = {}
+end
+
+section("40. cast-bar claims: rezzers without the addon, and 'don't release'")
+do
+    local w = rezRaid({ { "Silent", "PRIEST", false, 2 } })      -- a priest without the addon
+    local h, m = w.clients.Healbot, w.clients.Kumlust
+    w.dead = { Kumlust = true, Tankman = true }
+    w:Advance(1)
+    ok(decision(h).target == "Kumlust", "the priest aims at the mage")
+    w.casting.Silent = { spell = "Resurrection", target = "Kumlust", endAt = w.time + 9 }
+    w:Advance(0.6)
+    local who, src = h.NS.Rez:ClaimedBy("Kumlust")
+    ok(who == "Silent" and src == "cast", "a rez on somebody's cast bar claims their target", tostring(who))
+    ok(decision(h).target == "Tankman", "and the button moves to the warrior")
+    ok(#m.sounds > 0, "the mage heard the 'don't release' cue")
+    ok(string.find(m.prints[#m.prints] or "", "release", 1, true) ~= nil, "and read it", m.prints[#m.prints])
+    local n = #m.sounds
+    w:Advance(2)
+    ok(#m.sounds == n, "once per corpse, not once per tick")
+    -- the claim lasts as long as the cast does, not a flat 3s
+    w.casting.Silent = nil
+    w:Advance(5)
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == "Silent", "the claim outlives the old flat 3 seconds")
+    w:Advance(6)
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == nil, "and expires when the cast would have landed")
+    ok(#m.NS.Tracker:Available("REZ") == 3, "the silent priest is not on the rezzer roster - no addon")
+    w.dead = {}
+end
+
+section("41. heals: worst off, in range, minus what others already have in the air")
+do
+    local w = rezRaid()
+    local sh = w.clients.Shammy
+    w.hp = { Tankman = 6000, Kumlust = 5000 }
+    w.hpmax = { Tankman = 12000, Kumlust = 7000 }
+    w:Advance(1)
+    local d = decision(sh)
+    ok(d.action == "heal" and d.target == "Tankman", "two hurt: the group heal on the worst off (50% beats 71%)", tostring(d.target))
+    ok(d.healSpell and string.find(d.healSpell, "Chain Heal", 1, true), "a shaman with 2+ hurt uses Chain Heal", tostring(d.healSpell))
+    ok(rezBtn(sh)._attrs["*macrotext1"] == "/cast [@Tankman,help,nodead,nocombat] Chain Heal(Rank 5)",
+       "the heal macro aims at ONE name - no mouseover/target/player fallback to land it on the wrong person", rezBtn(sh)._attrs["*macrotext1"])
+    w.hp.Kumlust = 7000
+    w:Advance(1)
+    d = decision(sh)
+    ok(d.target == "Tankman" and string.find(d.healSpell, "Healing Wave", 1, true), "one hurt: single target", tostring(d.healSpell))
+    w.outOfRange = { Tankman = true }
+    w:Advance(1)
+    ok(decision(sh).action ~= "heal", "out of range: not chosen")
+    w.outOfRange = {}
+    -- inbound from others
+    w.hp.Kumlust = 5000
+    w.incoming = { Tankman = 6000 }
+    w:Advance(1)
+    ok(decision(sh).target == "Kumlust", "the tank is covered by others: it moves to the mage", tostring(decision(sh).target))
+    w.incoming = { Tankman = 6000, Kumlust = 2000 }
+    w:Advance(1)
+    ok(decision(sh).action == nil and not rezBtn(sh):IsShown(), "everyone covered: it stands down and leaves the screen")
+    w.incoming = {}
+    w.myIncoming = { Tankman = 6000 }
+    w:Advance(1)
+    ok(decision(sh).target == "Tankman", "your own inbound heal is not subtracted", tostring(decision(sh).target))
+    w.myIncoming = {}
+    -- larger, not sum: LibHealComm and native describing the same heal
+    sh.NS.Rez._hc = { CASTED_HEALS = 1, GetOthersHealAmount = function(_, guid) return (guid == "GUID-Tankman") and 6000 or 0 end }
+    w.incoming = { Tankman = 6000 }
+    w.hp.Kumlust = 7000
+    w:Advance(1)
+    ok(decision(sh).action == nil, "both sources on one target take the larger, not the sum")
+    sh.NS.Rez._hc = nil
+    w.incoming = {}
+    -- sizes include gear and talents
+    w.bonusHealing.Shammy = 1500
+    w.talents.Shammy = { { "Purification", 5 } }
+    w:Fire("Shammy", "SPELLS_CHANGED")
+    local lhw
+    for _, h in ipairs(sh.NS.Rez.heals) do if string.find(h.cast, "Lesser", 1, true) then lhw = h.heal end end
+    local want = (951 + 1500 * (1.5 / 3.5)) * 1.10
+    ok(lhw and math.abs(lhw - want) <= 1, "gear + talents fold into the heal size", tostring(lhw) .. " vs " .. want)
+    w.hp = { Tankman = 10500 }; w.hpmax = { Tankman = 12000 }
+    w:Advance(1)
+    ok(string.find(decision(sh).healSpell or "", "Lesser", 1, true), "a 1500 hole picks the small heal, not the big one", tostring(decision(sh).healSpell))
+    -- a paladin has no group heal in TBC
+    local w2 = rezRaid({ { "Holypal", "PALADIN", true, 2 } })
+    w2.manaMax.Holypal = 10000; w2.mana.Holypal = 8000
+    w2.hp = { Tankman = 6000, Kumlust = 5000 }; w2.hpmax = { Tankman = 12000, Kumlust = 7000 }
+    w2:Advance(1)
+    local dp = decision(w2.clients.Holypal)
+    ok(dp.action == "heal" and string.find(dp.healSpell, "Light", 1, true), "a paladin with two hurt falls back to a single-target heal", tostring(dp.healSpell))
+    w.hp, w.hpmax = {}, {}
+end
+
+section("42. drink when the next cast is unaffordable; the druid's button")
+do
+    local w = rezRaid()
+    local h, d = w.clients.Healbot, w.clients.Barky
+    w.dead = { Kumlust = true }
+    w.mana.Healbot = 100
+    w:Advance(1)
+    local dh = decision(h)
+    ok(dh.action == "drink" and dh.drinkId == 34062, "no mana for the rez: the biscuit", tostring(dh.action))
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/use [nocombat] 0 1", "as a bag/slot macro", rezBtn(h)._attrs["*macrotext1"])
+    ok(dh.why and string.find(dh.why, "drinking", 1, true), "and the tooltip says so", dh.why)
+    w.buffs.Healbot = { { "Drink", 27089 } }
+    w:Advance(1)
+    ok(decision(h).action ~= "drink", "already drinking: not again")
+    w.buffs.Healbot = nil
+    h.NS.db.rezDrink = false; h.NS.Rez.last = nil
+    w:Advance(1)
+    ok(decision(h).action == nil, "drink switched off: nothing")
+    h.NS.db.rezDrink = true
+    w.mana.Healbot = 8000
+    -- the druid: never a rez, but heals and drinks
+    w.dead = { Kumlust = true }
+    w:Advance(1)
+    ok(decision(d).action ~= "rez" and decision(d).target == nil, "a druid is never offered a rez, corpses or not")
+    w.dead = {}
+    w.hp = { Tankman = 1000 }; w.hpmax = { Tankman = 12000 }
+    w:Advance(1)
+    ok(decision(d).action == "heal", "a druid still heals", tostring(decision(d).action))
+    w.bags.Barky = { 22018 }
+    w.mana.Barky = 10
+    w:Advance(1)
+    ok(decision(d).action == "drink", "and drinks", tostring(decision(d).action))
+    w.mana.Barky = 8000
+    w.hp, w.hpmax = {}, {}
+end
+
+section("43. combat: the rez button is re-aimed only when the fight ends")
+do
+    local w = rezRaid()
+    w.blockSecureWrites = true
+    local h = w.clients.Healbot
+    w:Advance(1)
+    local armed = rezBtn(h)._attrs["*macrotext1"]
+    w:SetCombat(true)
+    local okRun, err = pcall(function()
+        w.dead = { Kumlust = true }
+        w:Advance(2)
+        click(rezBtn(h))
+        w:Fire("Healbot", "UI_ERROR_MESSAGE", 1, "Not enough mana")
+        w.hp = { Tankman = 2000 }; w.hpmax = { Tankman = 12000 }
+        w:Advance(2)
+        slash(h, "rez"); slash(h, "rezlist"); slash(h, "rezzers"); slash(h, "heals")
+        h.NS.Config:Set("rez", false); h.NS.Config:Set("rez", true)
+        rezBtn(h):GetScript("OnEnter")(rezBtn(h))
+    end)
+    ok(okRun, "a death, a click, an error, options and tooltips mid-fight touch nothing protected", err)
+    ok(rezBtn(h)._attrs["*macrotext1"] == armed, "the macro is untouched in combat", rezBtn(h)._attrs["*macrotext1"])
+    ok(h.NS.Window.rezPending == true, "the rebind is waiting for the fight to end")
+    w:SetCombat(false)
+    w:Advance(1)
+    ok(not h.NS.Window.rezPending and rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Kumlust,nocombat] Resurrection", "and lands when it does", rezBtn(h)._attrs["*macrotext1"])
+    w.dead = {}
+    w.hp, w.hpmax = {}, {}
+end
+
+section("44. 'rez me first': the ask goes to the front, the next click takes them")
+do
+    local w = rezRaid({ { "Frosty", "MAGE", true, 2 }, { "Pyro", "MAGE", true, 2 } })
+    local h, sh, fr, py, t = w.clients.Healbot, w.clients.Enhance, w.clients.Frosty, w.clients.Pyro, w.clients.Tankman
+    local okA, why = fr.NS.Calls:CanAsk("REZ")
+    ok(not okA and why == "you are alive", "a living mage cannot ask", why)
+    ok(not rezBtn(fr):IsShown(), "and has no button on screen")
+    local okH, whyH = h.NS.Calls:CanAsk("REZ")
+    ok(not okH and string.find(whyH, "button", 1, true), "a healer has the button instead", whyH)
+    w.dead = { Frosty = true, Pyro = true, Tankman = true, Shammy = true }
+    w:Advance(1)
+    ok(decision(h).target == "Shammy", "the rezzer goes first by default", tostring(decision(h).target))
+    ok(rezBtn(py):IsShown() and rezBtn(t):IsShown(), "the dead mage and warrior now have the ask button on screen")
+    ok(py.NS.Calls:CanAsk("REZ"), "a dead mage may ask")
+    click(rezBtn(py))                              -- the mage's button is the ask
+    w:Advance(1)
+    ok(h.NS.Calls:For("Pyro", "REZ") ~= nil, "the priest's client has the call")
+    ok(decision(h).target == "Pyro", "Pyro goes to the front of the line - ahead of the shaman", tostring(decision(h).target))
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Pyro,nocombat] Resurrection", "and the priest's next click takes Pyro", rezBtn(h)._attrs["*macrotext1"])
+    ok(rezBtn(py).sub:GetText() and string.find(rezBtn(py).sub:GetText(), "waiting", 1, true), "the mage's button says asked", rezBtn(py).sub:GetText())
+    click(rezBtn(t)); w:Advance(1)
+    ok(decision(h).target == "Pyro", "the warrior asks too: Pyro still first, he asked first", tostring(decision(h).target))
+    -- the priest takes Pyro; the shaman moves to the warrior
+    click(rezBtn(h)); w:StartCast("Healbot", "Resurrection", "Pyro", 10); w:Advance(0.6)
+    ok(decision(sh).target == "Tankman", "the shaman's button moves to the warrior - the other asker", tostring(decision(sh).target))
+    w:CastRez("Healbot", "Pyro"); w.dead.Pyro = nil; w:Advance(1)
+    ok(h.NS.Calls:For("Pyro", "REZ") == nil and py.NS.Calls:Mine("REZ") == nil, "the rez landing closes the call everywhere")
+    ok(not rezBtn(py):IsShown(), "and Pyro's button leaves the screen once he is up")
+    ok(decision(h).target == "Tankman", "the priest moves on to the warrior")
+    w.dead = {}
+end
+
+section("44b. the rez button is never there in a fight")
+do
+    local w = rezRaid()
+    local h, m = w.clients.Healbot, w.clients.Kumlust
+    w.hp = { Tankman = 2000 }; w.hpmax = { Tankman = 12000 }
+    w:Advance(1)
+    ok(rezBtn(h):IsShown() and decision(h).action == "heal", "a hurt warrior: the priest's button is on screen with a heal")
+    ok(w.drivers[rezBtn(h)] == "[combat] hide; show", "and its driver says: not in combat", tostring(w.drivers[rezBtn(h)]))
+    w:SetCombat(true)
+    ok(not rezBtn(h):IsShown(), "the pull starts: the button is gone")
+    w.dead = { Kumlust = true }
+    w:Advance(2)
+    ok(not rezBtn(h):IsShown() and rezBtn(h)._attrs["*macrotext1"] ~= "/cast [target=Kumlust,nocombat] Resurrection", "a death mid-fight changes nothing on screen or in the macro")
+    ok(not rezBtn(m):IsShown(), "the dead mage's ask button stays hidden too")
+    w:SetCombat(false); w:Advance(1)
+    ok(rezBtn(h):IsShown() and rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Kumlust,nocombat] Resurrection", "fight over: it is back, aimed at the corpse")
+    ok(rezBtn(m):IsShown(), "and the dead mage's ask button is back")
+    w.dead = {}; w.hp, w.hpmax = {}, {}
+    w:Advance(1)
+    ok(not rezBtn(h):IsShown() and not rezBtn(m):IsShown(), "everyone up and healthy: both gone again")
+    -- one hurt: the smallest heal that covers; two hurt: the group heal
+    local sh = w.clients.Shammy
+    w.hp = { Tankman = 11100 }; w.hpmax = { Tankman = 12000 }
+    w:Advance(1)
+    ok(string.find(decision(sh).healSpell or "", "Lesser", 1, true), "one person 900 down: Lesser Healing Wave, the smallest that covers", tostring(decision(sh).healSpell))
+    w.hp = { Tankman = 6000 }
+    w:Advance(1)
+    ok(string.find(decision(sh).healSpell or "", "Healing Wave", 1, true) and not string.find(decision(sh).healSpell or "", "Lesser", 1, true), "6000 down: the big one", tostring(decision(sh).healSpell))
+    w.hp = { Tankman = 11000, Kumlust = 6000 }; w.hpmax = { Tankman = 12000, Kumlust = 7000 }
+    w:Advance(1)
+    ok(string.find(decision(sh).healSpell or "", "Chain Heal", 1, true), "two hurt: Chain Heal", tostring(decision(sh).healSpell))
+    w.hp, w.hpmax = {}, {}
+end
+
+section("44c. the drink option: any mana user, under 75%, out of combat")
+do
+    local w = rezRaid()
+    local m, t, h = w.clients.Kumlust, w.clients.Tankman, w.clients.Healbot
+    w.manaMax.Kumlust = 10000; w.mana.Kumlust = 5000
+    w.bags.Kumlust = { 27860, 22018 }               -- draenic water and glacier water, no biscuit
+    w:Advance(1)
+    ok(not rezBtn(m):IsShown() and not m.NS.Rez:Active(), "off by default: the mage has no button")
+    m.NS.Config:Set("rezDrinkLow", true)
+    w:Advance(1)
+    local d = decision(m)
+    ok(m.NS.Rez:Active() and d.action == "drink" and d.lowMana, "on, at 50%: the button is a drink", tostring(d.action))
+    ok(d.drinkId == 22018 and rezBtn(m)._attrs["*macrotext1"] == "/use [nocombat] 0 2", "glacier water beats draenic water", tostring(d.drinkId))
+    ok(rezBtn(m):IsShown() and rezBtn(m).glow:IsShown() and rezBtn(m).anim:IsPlaying(), "on screen and blinking")
+    w.bags.Kumlust = { 27860, 22018, 34062 }
+    m.NS.Rez.last = nil; w:Advance(1)
+    ok(decision(m).drinkId == 34062, "a biscuit beats both", tostring(decision(m).drinkId))
+    w.mana.Kumlust = 8000; w:Advance(1)
+    ok(decision(m).action == nil and not rezBtn(m):IsShown(), "at 80% it is gone")
+    w.mana.Kumlust = 7000; w:Advance(1)
+    ok(decision(m).action == "drink", "under 75% it is back")
+    m.NS.Config:Set("rezDrinkAt", 60); w:Advance(1)
+    ok(decision(m).action == nil, "the threshold is an option")
+    m.NS.Config:Set("rezDrinkAt", 75)
+    w.buffs.Kumlust = { { "Drink", 27089 } }; w:Advance(1)
+    ok(decision(m).action == nil, "already drinking: nothing")
+    w.buffs.Kumlust = nil
+    -- in combat it is gone; dead it is the ask again
+    w:SetCombat(true)
+    ok(not rezBtn(m):IsShown(), "gone in combat")
+    w:SetCombat(false); w:Advance(1)
+    ok(rezBtn(m):IsShown() and decision(m).action == "drink", "back after")
+    w.dead = { Kumlust = true }; w:Advance(1)
+    ok(not m.NS.Rez:Active() and m.NS.Calls:CanAsk("REZ") and rezBtn(m):IsShown(), "dead: the button is 'rez me first' again")
+    w.dead = {}; w:Advance(1)
+    -- a warrior has no mana bar: never
+    t.NS.Config:Set("rezDrinkLow", true); w:Advance(1)
+    ok(not t.NS.Rez:Active() and not rezBtn(t):IsShown(), "a warrior never drinks")
+    -- a healer with it on drinks too, once nothing needs a rez or a heal
+    h.NS.Config:Set("rezDrinkLow", true)
+    w.mana.Healbot = 5000; w:Advance(1)
+    ok(decision(h).action == "drink" and decision(h).lowMana, "a priest at 50% with nothing to do drinks", tostring(decision(h).action))
+    w.dead = { Kumlust = true }; w:Advance(1)
+    ok(decision(h).action == "rez", "a corpse still comes first")
+    w.dead = {}; w.mana.Healbot = 8000
+end
+
+section("44d. heal sizes: measured beats estimated, and the group heal downranks")
+do
+    local w = rezRaid()
+    local sh = w.clients.Shammy
+    w.book.Shammy = {
+        { "Ancestral Spirit", "Rank 5", 2008 },
+        { "Lesser Healing Wave", "Rank 1", 8004, "Heals a friendly target for 170 to 200." },
+        { "Lesser Healing Wave", "Rank 6", 25420, "Heals a friendly target for 892 to 1010." },
+        { "Healing Wave", "Rank 11", 25357, "Heals a friendly target for 1919 to 2190." },
+        { "Chain Heal", "Rank 1", 1064,  "Heals a friendly target for 320 to 370." },
+        { "Chain Heal", "Rank 3", 10623, "Heals a friendly target for 605 to 690." },
+        { "Chain Heal", "Rank 5", 25423, "Heals a friendly target for 1055 to 1205." },
+    }
+    w.spellLevel = { [8004] = 20, [25420] = 66, [25357] = 70, [1064] = 40, [10623] = 60, [25423] = 70 }
+    w.bonusHealing.Shammy = 2000
+    sh.NS.Rez:BuildHealTable()
+    local R = sh.NS.Rez
+    ok(#R.heals == 3 and #R.groupHeals == 3, "three single ranks, three Chain Heal ranks", #R.heals .. "/" .. #R.groupHeals)
+    local function byId(id) for _, l in ipairs({ R.heals, R.groupHeals }) do for _, e in ipairs(l) do if e.id == id then return e end end end end
+    -- the downrank penalty: rank 1 LHW (level 20) gets (20+11)/70 of the coefficient
+    local r1, r6 = byId(8004), byId(25420)
+    local full = (185 + 2000 * (1.5 / 3.5))
+    local pen  = (185 + 2000 * (1.5 / 3.5) * (31 / 70))
+    ok(math.abs(r1.est - pen) < 1 and r1.est < full, "a rank learned 50 levels ago is penalised on healing power", tostring(r1.est))
+    ok(math.abs(r6.est - (951 + 2000 * (1.5 / 3.5))) < 1, "a current rank is not", tostring(r6.est))
+    -- two hurt, small holes: the smallest Chain Heal that covers, not max rank
+    w.hp = { Tankman = 11300, Kumlust = 6500 }; w.hpmax = { Tankman = 12000, Kumlust = 7000 }
+    w:Advance(1)
+    local d = decision(sh)
+    ok(d.action == "heal" and d.healSpell == "Chain Heal(Rank 1)", "two people ~600 down: Chain Heal rank 1", tostring(d.healSpell))
+    w.hp = { Tankman = 9000, Kumlust = 6500 }
+    w:Advance(1)
+    ok(decision(sh).healSpell == "Chain Heal(Rank 5)", "one of them 3000 down: rank 5", tostring(decision(sh).healSpell))
+    -- measurement: my own casts in the combat log
+    local estR6 = r6.heal
+    w:Heal2("Shammy", "Tankman", 25420, "Lesser Healing Wave", 1500, 0, true)     -- a crit
+    ok(byId(25420).measured == nil, "a crit is thrown out")
+    w:Advance(2)
+    w:Heal2("Shammy", "Tankman", 25420, "Lesser Healing Wave", 1500, 900, false)  -- mostly overheal
+    ok(byId(25420).measured == nil, "a cast that was mostly overheal is thrown out")
+    w:Advance(2)
+    w:Heal2("Shammy", "Tankman", 25420, "Lesser Healing Wave", 2400, 100, false)
+    ok(byId(25420).measured == 2400 and byId(25420).heal == 2400, "a clean cast measures the rank", tostring(byId(25420).heal))
+    ok(sh.NS.db.rezHealSizes[25420].n == 1, "and is saved")
+    local cal = 2400 / estR6
+    ok(math.abs(byId(25357).heal - byId(25357).est * cal) < 1, "the unmeasured rank is scaled by the same factor", tostring(byId(25357).heal))
+    -- a chain's bounces do not count: only the first heal of a cast
+    w:Advance(2)
+    w:Heal2("Shammy", "Tankman", 25423, "Chain Heal", 2800, 0, false)
+    w:Heal2("Shammy", "Kumlust", 25423, "Chain Heal", 1400, 0, false)
+    ok(byId(25423).measured == 2800, "only the first target of a chain measures it", tostring(byId(25423).measured))
+    -- a running average, and the picker uses the measured sizes
+    w:Advance(2)
+    w:Heal2("Shammy", "Tankman", 25420, "Lesser Healing Wave", 2600, 0, false)
+    ok(byId(25420).measured == 2500, "two casts average", tostring(byId(25420).measured))
+    w.hp = { Tankman = 9700 }; w.hpmax = { Tankman = 12000 }
+    w:Advance(1)
+    ok(decision(sh).healSpell == "Lesser Healing Wave(Rank 6)", "a 2300 hole now fits the measured LHW instead of Healing Wave", tostring(decision(sh).healSpell))
+    slash(sh, "rezsizes")
+    ok(byId(25420).measured == nil and next(sh.NS.db.rezHealSizes) == nil, "/inn rezsizes forgets the measurements")
+    w.hp, w.hpmax = {}, {}
+end
+
+section("44e. a druid in bear or cat form cannot innervate, and everyone knows")
+do
+    local w = raid(BASE)
+    local m, a, b = w.clients.Kumlust, w.clients.Barky, w.clients.Treebo
+    ok(m.NS.Calls:CanAsk("INNERVATE") and m.NS.Tracker:DruidsReady() == 2, "two druids up")
+    w.form = { Barky = 1 }                             -- Barky goes bear
+    w:Fire("Barky", "UPDATE_SHAPESHIFT_FORM"); w:Advance(1)
+    ok(m.NS.Tracker.providers.INNERVATE.Barky.shifted == true, "the mage's client hears Barky is in a form")
+    ok(m.NS.Tracker:DruidsReady() == 1 and m.NS.Calls:CanAsk("INNERVATE"), "one druid left to ask")
+    -- Barky's own grid greys
+    a.NS.Window:DoRefresh()
+    ok(face(a, "Kumlust"):GetAlpha() == 0.3, "on Barky's screen the faces grey out", face(a, "Kumlust"):GetAlpha())
+    ok(face(b, "Kumlust"):GetAlpha() ~= 0.3, "Treebo's do not")
+    -- both in form: the ask greys with the reason
+    w.form.Treebo = 3
+    w:Fire("Treebo", "UPDATE_SHAPESHIFT_FORM"); w:Advance(1)
+    local okA, why = m.NS.Calls:CanAsk("INNERVATE")
+    ok(not okA and string.find(why, "bear or cat", 1, true), "both in form: the mage cannot ask, and is told why", why)
+    m.NS.Window:DoRefresh()
+    ok(m.NS.Window.inn.icon:GetAlpha() < 1, "the innervate button is greyed")
+    -- Barky shifts out: back
+    w.form.Barky = nil
+    w:Fire("Barky", "UPDATE_SHAPESHIFT_FORM"); w:Advance(1)
+    ok(m.NS.Calls:CanAsk("INNERVATE") and m.NS.Tracker:DruidsReady() == 1, "Barky leaves the form: askable again")
+    a.NS.Window:DoRefresh()
+    ok(face(a, "Kumlust"):GetAlpha() ~= 0.3, "and his grid is live again")
+    -- it survives a HELLO round (the flag rides the kinds blob)
+    b.NS.Comm:Hello(); w:Advance(3)
+    ok(m.NS.Tracker.providers.INNERVATE.Treebo.shifted == true, "Treebo's HELLO still says in a form")
+    w.form = nil
+end
+
+section("44f. healer mode: the rez button and nothing else")
+do
+    local w = rezRaid()
+    local h = w.clients.Healbot
+    local W, f = h.NS.Window, h.NS.Window.frame
+    local function shownBtns() local n = 0; for _, b in pairs(W.buttons) do if b:IsShown() then n = n + 1 end end; return n end
+    local function faces() local n = 0; for _ in pairs(W.byName) do n = n + 1 end; return n end
+    ok(faces() == 4 and shownBtns() == 4, "everyone: four faces, four buttons (rez off screen, nothing to do)")
+    click(W.healerBtn)
+    ok(h.env.BiSInnervateDB.healerOnly == true and W.healerBtn.lit == true, "H turns healer mode on")
+    ok(faces() == 0 and shownBtns() == 0, "no faces, no ask buttons")
+    ok(f:GetWidth() == math.max(W.PAD * 2 + W.BTN_H, W.MINW_MAGES) and f:GetHeight() == W.HEADER + W.PAD + W.BTN_H + W.PAD,
+       "the window is one button wide and one button tall", f:GetWidth() .. "x" .. f:GetHeight())
+    ok(not W.cfgBtn:IsShown() and not W.title:IsShown(), "title and cfg leave the bar")
+    -- the bar: logo (4..15px) then H, M, x from the right - none may overlap
+    local _, _, _, hx = W.healerBtn:GetPoint()
+    ok(not W.logo:IsShown() and f:GetWidth() + hx - 12 >= 4, "the logo leaves the narrow bar and H clears the edge", f:GetWidth() + hx - 12)
+    -- something to do: the rez button appears, in the first slot
+    w.dead = { Kumlust = true }; w:Advance(1)
+    ok(rezBtn(h):IsShown() and shownBtns() == 1, "a corpse: the rez button is the only thing on screen")
+    local _, _, _, rx = rezBtn(h):GetPoint()
+    ok(rx == W.PAD, "sitting where the first button would", rx)
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Kumlust,nocombat] Resurrection", "and aimed at the corpse")
+    w.dead = {}; w:Advance(1)
+    ok(shownBtns() == 0, "corpse up: gone again")
+    -- mutually exclusive with mages-only
+    click(W.magesBtn)
+    ok(h.env.BiSInnervateDB.magesOnly == true and h.env.BiSInnervateDB.healerOnly == false, "M turns healer mode off")
+    click(W.healerBtn)
+    ok(h.env.BiSInnervateDB.healerOnly == true and h.env.BiSInnervateDB.magesOnly == false, "H turns mages-only off")
+    -- mid-fight it waits
+    w:SetCombat(true)
+    click(W.healerBtn)
+    ok(h.env.BiSInnervateDB.healerOnly == false and faces() == 0, "off mid-fight: saved, but the window did not move")
+    w:SetCombat(false); w:Advance(1)
+    ok(faces() == 4 and shownBtns() == 4 and f:GetWidth() == W.width, "fight over: everyone is back")
+    -- the option and the slash write the same key
+    h.NS.Config:Set("healerOnly", true)
+    ok(h.NS.Config:Get("healerOnly") == true and faces() == 0, "options tick: same thing")
+    slash(h, "healer")
+    ok(h.NS.Config:Get("healerOnly") == false and faces() == 4, "/inn healer: off again")
+    local _, _, _, rx2 = rezBtn(h):GetPoint()
+    ok(rx2 == W.PAD + 4 * (W.BTN_H + W.GAP), "and the rez button is back in the fifth slot", rx2)
+end
+
+section("45. wipe protection")
+do
+    local w = rezRaid({ { "Holypal", "PALADIN", true, 2 } })
+    local sh, m = w.clients.Shammy, w.clients.Kumlust
+    ok(sh.NS.Rez:MyWipeProtection() == "", "a shaman with no Ankh has none")
+    w.bags.Shammy = { 17030 }
+    ok(sh.NS.Rez:MyWipeProtection() == "R", "Reincarnation with an Ankh counts", sh.NS.Rez:MyWipeProtection())
+    w.cd["Shammy#Reincarnation"] = w.time + 1800
+    ok(sh.NS.Rez:MyWipeProtection() == "", "on cooldown it does not")
+    w.cd["Shammy#Reincarnation"] = nil
+    w.buffs.Shammy = { { "Soulstone Resurrection", 27239 } }
+    ok(sh.NS.Rez:MyWipeProtection() == "RS", "a soulstone on a rezzer counts too", sh.NS.Rez:MyWipeProtection())
+    w.buffs.Kumlust = { { "Soulstone Resurrection", 27239 } }
+    ok(m.NS.Rez:MyWipeProtection() == "", "a soulstone on a mage does not")
+    -- over the wire, in the HELLO blob
+    sh.NS.Comm:Hello(); w:Advance(1)
+    local hp = w.clients.Holypal
+    ok(hp.NS.Rez:MyWipeProtection() == "D", "a paladin brings Divine Intervention", hp.NS.Rez:MyWipeProtection())
+    local n, detail = m.NS.Rez:WipeProtection()
+    ok(n == 3, "the mage's client counts the shaman's two and the paladin's one", n)
+    ok(detail[1].what == "Divine Intervention" and detail[2].what == "Reincarnation" and detail[2].name == "Shammy", "and names them", detail[1].what)
+    w.buffs.Shammy = nil
+    sh.NS.Comm:Hello(); w:Advance(1)
+    ok(m.NS.Rez:WipeProtection() == 2, "and drops one when the stone is gone", m.NS.Rez:WipeProtection())
+    -- a HELLO with a kind this client does not know is harmless
+    w:Deliver("Healbot", "Kumlust", "4|HELLO|9.9.9|REZ,FOO=X|0,0|70|2|6")
+    ok(m.NS.Tracker.providers.REZ.Healbot ~= nil and m.NS.Tracker.providers.FOO == nil, "an unknown kind in a HELLO is ignored, the known one lands")
+end
+
+section("46. the rez page of the options window")
+do
+    local w = rezRaid()
+    local c = w.clients.Healbot
+    local C, db = c.NS.Config, c.env.BiSInnervateDB
+    ok(pcall(function() C:Build(); C:ShowTab("Rez"); C:Refresh() end), "it builds and refreshes")
+    for _, id in ipairs({ "rez", "rezHeal", "rezDrink", "rezKeepScores" }) do
+        local was = C:Get(id)
+        C:Set(id, false); local off = C:Get(id) == false
+        C:Set(id, true);  local on  = C:Get(id) == true
+        C:Set(id, was)
+        ok(off and on, id .. " round-trips through the saved variable")
+    end
+    C:Set("rez", false)
+    ok(db.rez == false and not c.NS.Rez:Enabled() and rezBtn(c)._attrs["*type1"] == nil, "switching the button off unwires it")
+    C:Set("rez", true)
+    ok(rezBtn(c)._attrs["*type1"] == "macro", "and on wires it again")
+    ok(C.controls.rezRescan == nil and C.actions.rezRescan and C.actions.rezScore and C.actions.rezReset, "the buttons are actions")
+    ok(pcall(function() C:Run("rezRescan"); C:Run("rezScore"); C:Run("rezReset") end), "and run")
+end
+
+section("47. an override keybind, stored and re-applied")
+do
+    local w = rezRaid()
+    local c = w.clients.Healbot
+    slash(c, "bind alt-r")
+    ok(w.binds.Healbot and w.binds.Healbot["ALT-R"] == "BiSInnervateREZButton", "bound as an override, to the button", tostring(w.binds.Healbot and w.binds.Healbot["ALT-R"]))
+    ok(c.env.BiSInnervateDB.rezBindKey == "ALT-R", "and remembered")
+    w.binds.Healbot = {}
+    local w2 = raid(BASE, { Healbot = c.env.BiSInnervateDB })
+    ok(w2.binds.Healbot and w2.binds.Healbot["ALT-R"] ~= nil, "re-applied after a reload")
+    slash(c, "unbind")
+    ok(next(w.binds.Healbot) == nil and c.env.BiSInnervateDB.rezBindKey == nil, "unbind clears both")
+    w:SetCombat(true)
+    slash(c, "bind alt-r")
+    ok(c.env.BiSInnervateDB.rezBindKey == nil, "not in combat")
+    w:SetCombat(false)
+end
+
+section("48. the rez wire is defended")
+do
+    local w = rezRaid()
+    local h, sh = w.clients.Healbot, w.clients.Shammy
+    w.dead = { Kumlust = true }
+    w:Advance(1)
+    w:Deliver("Ganker", "Healbot", "4|RCLAIM|Kumlust", "WHISPER")
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == nil, "a whispered claim from outside is ignored")
+    w:Deliver("Nobody", "Healbot", "4|RCLAIM|Kumlust")
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == nil, "a claim from a non-member is ignored")
+    w:Deliver("Shammy", "Healbot", "4|RCLAIM|Kumlust")
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == "Shammy", "a member's claim is honoured")
+    w:Deliver("Enhance", "Healbot", "4|RFREE|Kumlust")
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == "Shammy", "only the claimant can free it")
+    w:Deliver("Shammy", "Healbot", "4|RFREE|Kumlust")
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == nil, "and does")
+    w:Deliver("Shammy", "Healbot", "3|RCLAIM|Kumlust")
+    ok(h.NS.Rez:ClaimedBy("Kumlust") == nil, "another protocol is dropped")
+    -- a red error right after our click frees the corpse we aimed at
+    click(rezBtn(h)); w:StartCast("Healbot", "Resurrection", "Kumlust", 10); w:Advance(0.3)
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == "Healbot", "claimed")
+    w:Fire("Healbot", "UI_ERROR_MESSAGE", 1, "You are already in a party")
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == "Healbot", "an unrelated red error is not blamed on the cast")
+    w.casting.Healbot = nil                        -- the cast never happened
+    w:Fire("Healbot", "UI_ERROR_MESSAGE", 1, "Out of range.")
+    w:Advance(0.3)
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == nil, "a real cast error frees it")
+    ok(string.find(h.prints[#h.prints] or "", "Out of range", 1, true) ~= nil, "and is reported once", h.prints[#h.prints])
+    local n = #h.prints
+    w:Advance(5)
+    w:Fire("Healbot", "UI_ERROR_MESSAGE", 1, "Out of range.")
+    ok(#h.prints == n, "an error long after the click is not")
+    w.dead = {}
+end
+
+section("49. the scoreboard is per raid, and the slash commands print")
+do
+    local w = rezRaid()
+    local h = w.clients.Healbot
+    w.dead = { Kumlust = true }
+    w:CastRez("Healbot", "Kumlust"); w.dead = {}
+    w:CastRez("Healbot", "Tankman")
+    ok(h.NS.db.rezScores.Healbot == 2, "two rezzes, two points", tostring(h.NS.db.rezScores.Healbot))
+    ok(h.NS.Rez:ChampionText() == "Healbot 2", "the champion", tostring(h.NS.Rez:ChampionText()))
+    slash(h, "rezscore")
+    ok(string.find(h.prints[#h.prints] or "", "Healbot", 1, true) ~= nil, "/inn rezscore prints it")
+    -- a zone-in blip does not clear it; leaving for real does
+    w.blip = true
+    w:FireAll("GROUP_ROSTER_UPDATE"); w:Advance(1)
+    ok(h.NS.db.rezScores.Healbot == 2, "a zone-in blip keeps the board")
+    w:Advance(11); w:FireAll("GROUP_ROSTER_UPDATE"); w:Advance(1)
+    ok(next(h.NS.db.rezScores) == nil, "ten seconds of nobody clears it")
+    w.blip = false
+    slash(h, "rezzers"); slash(h, "rezlist"); slash(h, "heals"); slash(h, "rez")
+    ok(#h.prints > 4, "the rez slash commands print")
+end
+
+section("50. a raider still on 3.2.0 sees everything but the rez")
+do
+    local w = H.NewWorld(".")
+    w.rootFor = { Oldie = "./dev/old-3.2" }
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    w:AddPlayer("Oldie", "MAGE", true, 2)
+    w.manaMax = { Healbot = 10000, Shammy = 10000 }; w.mana.Healbot, w.mana.Shammy = 8000, 8000
+    w.bags.Shammy = { 17030 }
+    w:Login(); w:Advance(4)
+    local o, h = w.clients.Oldie, w.clients.Healbot
+    ok(o.NS.VERSION == "3.2.0" and o.NS.Rez == nil, "the old client is really 3.2.0")
+    ok(o.NS.PROTOCOL == 4 and h.NS.PROTOCOL == 4, "same protocol: nobody is told to update")
+    ok(o.NS.Tracker:TideFor("Kumlust") ~= nil and o.NS.Tracker:HasDruid(), "it learned the tide shaman and the druids from the new HELLOs")
+    ok(o.NS.Tracker.providers.REZ == nil, "and simply does not know REZ")
+    local n = 0
+    for _ in pairs(o.NS.Window.byName) do n = n + 1 end
+    ok(n == 7, "its grid has every mana user, the new clients included", n)
+    ok(face(h, "Oldie") ~= nil and h.NS.Tracker:Available("REZ")[1] ~= nil, "and the new clients have it on theirs")
+    -- rez traffic goes past it without a word
+    w.dead = { Kumlust = true }
+    w:Advance(1)
+    local before = #o.prints
+    click(rezBtn(h)); w:StartCast("Healbot", "Resurrection", "Kumlust", 10); w:Advance(0.6)
+    w:StopCast("Healbot", "UNIT_SPELLCAST_INTERRUPTED"); w:Advance(0.6)
+    w:CastRez("Shammy", "Kumlust"); w.dead = {}
+    slash(w.clients.Tankman, "rez")
+    ok(#o.prints == before, "RCLAIM, RFREE, RDONE and a REZ ask print nothing on the old client")
+    ok(not o.NS.Comm._warnedProto and not o.NS.Comm._warnedOld, "and raise no protocol warning")
+    -- and the old client's calls still work on the new ones
+    slash(o, ""); w:Advance(1)
+    ok(pulsing(face(w.clients.Barky, "Oldie")), "its innervate call pulses on a 3.3 druid's screen")
+end
+
+section("51. nothing on any options page overlaps or runs off its column")
+do
+    -- a shaman whose spellbook shows every rank: the longest heal text there is
+    local w = rezRaid()
+    local sh = w.clients.Shammy
+    local book = {}
+    for i = 1, 10 do
+        book[#book + 1] = { "Lesser Healing Wave", "Rank " .. i, 8000 + i, "Heals a friendly target for " .. (100 * i) .. " to " .. (120 * i) .. "." }
+        book[#book + 1] = { "Healing Wave", "Rank " .. i, 25300 + i, "Heals a friendly target for " .. (300 * i) .. " to " .. (350 * i) .. "." }
+    end
+    book[#book + 1] = { "Chain Heal", "Rank 5", 25423, "Heals a friendly target for 1055 to 1205." }
+    book[#book + 1] = { "Ancestral Spirit", "Rank 5", 2008 }
+    w.book.Shammy = book
+    w.bonusHealing.Shammy = 2118
+    sh.NS.Rez:BuildHealTable()
+    ok(#sh.NS.Rez.heals == 20, "twenty heal ranks in the table", #sh.NS.Rez.heals)
+    local C = sh.NS.Config
+    C:Build(); C:Refresh()
+    for _, name in ipairs(C.PAGES) do
+        local problems = H.CheckLayout(C.pages[name], C.frame)
+        ok(#problems == 0, "page " .. name .. " lays out clean", table.concat(problems, "; "))
+    end
+    -- the check itself has teeth: a label made too long is caught
+    local page = C.pages.Rez
+    local long = sh.env.CreateFrame("Frame", nil, page)
+    long:SetSize(100, 20); long:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -5)
+    local t = long:CreateFontString(); t:SetFont("Fonts\\FRIZQT__.TTF", 12); t:SetPoint("LEFT", long, "LEFT", 0, 0)
+    t:SetText(string.rep("wide ", 40))
+    local problems = H.CheckLayout(page, C.frame)
+    ok(#problems > 0, "a too-wide label and an overlapping frame are reported", #problems)
+    long:Hide(); t:Hide()
+end
+
+section("52. the title cycles between who is online and what the window is doing")
+do
+    local w = rezRaid()
+    local m = w.clients.Kumlust
+    local W = m.NS.Window
+    -- druids are off the grid: mages and healers only
+    local classes = {}
+    for _, f in ipairs(W.faces or {}) do if f.class then classes[f.class] = true end end
+    ok(not classes.DRUID, "no druid face on the grid", table.concat((function() local t = {} for k in pairs(classes) do t[#t+1] = k end return t end)(), ","))
+    local list = W:OnlineList()
+    local withAddon = 0
+    for _, e in ipairs(list) do if m.NS.Comm:HasAddon(e.name) then withAddon = withAddon + 1 end end
+    ok(#list > 1 and withAddon == #list, "the online list is everyone with the addon, me included", #list, withAddon)
+    ok(list[1].name == "Kumlust", "and I am first", list[1].name)
+    ok(W.onlineBtn and W.onlineBtn:IsShown(), "the hover strip over the title is there")
+    -- a plain click on it does nothing (so a drag there moves the window);
+    -- shift-click prints who is online
+    local printed = {}
+    local oldPrint = m.NS.Print
+    m.NS.Print = function(msg) printed[#printed + 1] = msg end
+    w.shift = false; W.onlineBtn:GetScript("OnClick")(W.onlineBtn)
+    ok(#printed == 0, "a plain click on the title prints nothing", printed[1])
+    w.shift = true;  W.onlineBtn:GetScript("OnClick")(W.onlineBtn)
+    ok(#printed == 1 and string.find(printed[1] or "", "with the addon", 1, true) ~= nil, "shift-click prints the list", printed[1])
+    w.shift = false; m.NS.Print = oldPrint
+    ok(W.onlineBtn:GetScript("OnDragStart") ~= nil, "and it hands a drag to the window")
+    -- the two messages
+    local msgs = W:TitleMessages()
+    ok(string.find(msgs[1], #list .. " online", 1, true) ~= nil, "slot one counts the addon users", msgs[1])
+    ok(string.find(msgs[2], "Innervate", 1, true) ~= nil, "slot two is the name when nothing is happening", msgs[2])
+    -- from a fresh start: the name holds, fades out, the count fades in
+    W._title = nil
+    local t0 = w.time
+    W:TickTitle(t0)
+    ok(W.title:GetAlpha() == 1 and W.title:GetText() == msgs[2], "starts on the action text at full alpha", W.title:GetText())
+    W:TickTitle(t0 + 1)
+    ok(W.title:GetAlpha() == 1, "still solid inside the hold", W.title:GetAlpha())
+    W:TickTitle(t0 + W.TITLE_HOLD)                      -- hold over -> fade out begins
+    W:TickTitle(t0 + W.TITLE_HOLD + W.TITLE_FADE / 2)
+    local mid = W.title:GetAlpha()
+    ok(mid > 0 and mid < 1, "half way through the fade out", mid)
+    W:TickTitle(t0 + W.TITLE_HOLD + W.TITLE_FADE + 0.01) -- gone: swap to the count
+    ok(W.title:GetText() == msgs[1], "swaps to the online count once dark", W.title:GetText())
+    local t1 = t0 + W.TITLE_HOLD + W.TITLE_FADE + 0.01
+    W:TickTitle(t1 + W.TITLE_FADE / 2)
+    mid = W.title:GetAlpha()
+    ok(mid > 0 and mid < 1, "fading the count in", mid)
+    W:TickTitle(t1 + W.TITLE_FADE + 0.01)
+    ok(W.title:GetAlpha() == 1, "and holds it solid", W.title:GetAlpha())
+    -- the action changes while the name slot is up: shown at once, no fade
+    W._title = nil
+    W:TickTitle(t1 + 10)
+    W._actionText = "heal Jeck"
+    W:TickTitle(t1 + 10.1)
+    ok(W.title:GetText() == "heal Jeck" and W.title:GetAlpha() == 1, "a new action replaces the name straight away", W.title:GetText())
+    W._actionText = nil
+    -- ticking in a fight touches text and alpha only: no secure write
+    w:SetCombat(true)
+    local okc = pcall(function() W:TickTitle(t1 + 20) end)
+    ok(okc, "ticking in combat is safe")
+    w:SetCombat(false)
+end
+
+section("53. spec on the grid, and the mode a class starts in")
+do
+    -- Healbot went shadow (tab 3), Shammy is resto (tab 3), Enhance is
+    -- enhance (tab 2), Holypal is holy (tab 1)
+    local w = H.NewWorld(".")
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    w:AddPlayer("Holypal", "PALADIN", true, 2)
+    w:AddPlayer("Retpal",  "PALADIN", true, 2)
+    w.tabs = { Healbot = { 0, 0, 41 }, Shammy = { 0, 0, 41 }, Enhance = { 0, 41, 20 },
+               Holypal = { 41, 0, 20 }, Retpal = { 0, 0, 61 } }
+    w:Login(); w:Advance(4)
+    local m = w.clients.Kumlust
+    local names = {}
+    for name in pairs(m.NS.Window.byName) do names[#names + 1] = name end
+    table.sort(names)
+    ok(table.concat(names, ",") == "Holypal,Kumlust,Shammy",
+       "only the healing-tree priests, paladins and shamans get a face (the mage too)", table.concat(names, ","))
+    ok(m.NS.Tracker.providers.REZ.Healbot and m.NS.Tracker.providers.REZ.Healbot.dpsSpec == true, "the shadow priest's blob says X")
+    ok(m.NS.Tracker.providers.REZ.Shammy and not m.NS.Tracker.providers.REZ.Shammy.dpsSpec, "the resto shaman's does not")
+    -- the wipe count does not count the spec letters
+    local n, detail = m.NS.Rez:WipeProtection()
+    local stray = false
+    for _, e in ipairs(detail or {}) do if e.what == "H" or e.what == "X" then stray = true end end
+    ok(not stray and n == #(detail or {}), "H and X are not wipe protection", n)
+    -- the modes nobody chose: the healers start in Neb mode, the druids in
+    -- Odiss mode, the dps in the full window
+    local function mode(c)
+        local db = c.env.BiSInnervateDB
+        return db.healerOnly and "neb" or (db.magesOnly and "odiss" or "main")
+    end
+    ok(mode(w.clients.Shammy) == "main", "the tide shaman keeps the full window (a tide to hand out)", mode(w.clients.Shammy))
+    ok(mode(w.clients.Holypal) == "neb", "the holy paladin starts in Neb mode", mode(w.clients.Holypal))
+    ok(mode(w.clients.Healbot) == "main", "the shadow priest gets the full window", mode(w.clients.Healbot))
+    ok(mode(w.clients.Retpal) == "main", "so does the ret paladin", mode(w.clients.Retpal))
+    ok(mode(w.clients.Barky) == "odiss", "a druid starts in Odiss mode", mode(w.clients.Barky))
+    ok(mode(w.clients.Kumlust) == "main", "a mage in the full window", mode(w.clients.Kumlust))
+    ok(not w.clients.Holypal.env.BiSInnervateDB.modeSet, "and nothing is pinned yet")
+    -- the paladin turns it off: pinned, and a respec no longer moves it
+    local hp = w.clients.Holypal
+    hp.NS.Window:SetHealerOnly(false)
+    ok(hp.env.BiSInnervateDB.modeSet == true and mode(hp) == "main", "H pins the choice", mode(hp))
+    hp.NS.Window:DefaultMode()
+    ok(mode(hp) == "main", "the default never runs again once pinned", mode(hp))
+    -- the shadow priest respecs holy: their blob flips and the mage's grid grows
+    w.tabs.Healbot = { 0, 41, 20 }
+    w:Fire("Healbot", "PLAYER_TALENT_UPDATE"); w:Advance(1)
+    ok(m.NS.Window.byName.Healbot ~= nil, "a respec to holy puts the priest on the grid")
+    ok(mode(w.clients.Healbot) == "neb", "and, never having chosen, they land in Neb mode", mode(w.clients.Healbot))
+    -- a druid with drums in the bag keeps the full window (drums to hand out)
+    local w2 = H.NewWorld(".")
+    w2:AddPlayer("Barky", "DRUID", true, 1); w2:AddPlayer("Kumlust", "MAGE", true, 1)
+    w2.drums = { Barky = 29529 }
+    w2:Login(); w2:Advance(4)
+    ok(mode(w2.clients.Barky) == "main", "a druid with drums starts in the full window", mode(w2.clients.Barky))
+    -- no talent API at all (the 3.2 harness world): nobody is hidden
+    ok(m.NS.MyHealerSpec() == nil, "a mage has no spec to read")
+end
+
+section("17. hygiene")
+do
+    local w = raid(BASE)
+    local allow = { BiSInnervateDB = true, SLASH_BISINNERVATE1 = true, SLASH_BISINNERVATE2 = true, SLASH_BISINNERVATE3 = true }
+    local leaks = {}
+    local c = w.clients.Barky
+    for k in pairs(c.env) do
+        if not c.envBefore[k] and not allow[k] then leaks[#leaks + 1] = tostring(k) end
+    end
+    ok(#leaks == 0, "no global leaks", table.concat(leaks, ","))
+    slash(c, "status")
+    ok(#c.prints > 0, "/inn status prints")
+    slash(c, "nonsense")
+    ok(string.find(c.prints[#c.prints] or "", "commands:", 1, true) ~= nil, "unknown command prints help")
+end
+
+--------------------------------------------------------------------
+print(string.format("\n%d passed, %d failed\n", pass, fail))
+os.exit(fail == 0 and 0 or 1)

@@ -1,0 +1,28 @@
+## Interface: 20506
+## Title: BiS Innervate
+## Notes: One window for the whole raid: call for Innervate, Mana Tide, Bloodlust or Drums; druids click the face that pulses, the first click locks everyone else out. Healers get a one-click rez / heal / drink button that takes the rezzers first. Combat safe.
+## Author: Kumlust
+## OptionalDeps: BiSTheme, FojjiCore
+## Version: 3.3.5
+## SavedVariables: BiSInnervateDB
+## X-Category: Raid
+## X-License: MIT
+## IconTexture: Interface\Icons\Spell_Nature_Lightning
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibHealComm-4.0\ChatThrottleLib.lua
+Libs\LibHealComm-4.0\LibHealComm-4.0.lua
+
+Core\Util.lua
+Core\Comm.lua
+Core\Tracker.lua
+Core\Sound.lua
+Core\Calls.lua
+Core\Rez.lua
+UI\Window.lua
+UI\Minimap.lua
+UI\Config.lua
+Core\Demo.lua
+Core\Options.lua
+Core\Init.lua
