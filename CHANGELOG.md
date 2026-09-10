@@ -15,7 +15,10 @@
   drift; the suite clicks every control mid-fight and holds it to zero protected calls.
 - The options window's test button and the voice stepper play a cue every class hears. They
   played `someoneAsked`, which is a druid's cue - silent on everyone else, the old panel too.
-- 585 checks, both ways; 59 for the kit itself.
+- Voice packs show as the voice - `Illidan`, `Fojji`, `Stacy` - not Fojji's `Flavour - ` /
+  `Community - <Numen>` wrapping, which is all a 40 px stepper had room for. `auto` prefers
+  Illidan when it is installed and carries our lines, then any pack that does, then the first.
+- 594 checks, both ways; 59 for the kit itself.
 
 ## 3.3.6
 

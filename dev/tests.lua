@@ -1028,6 +1028,21 @@ do
     }
     c.env.BiSInnervateDB.voice = "auto"
     ok(S:ActivePack() == "Community - Ripley", "auto skips a pack without our lines", tostring(S:ActivePack()))
+    -- Arn's pick, whatever Fojji prefixes it with: Illidan first when it has our lines
+    c.env.FojjiCore.voicePackOrder = { "Community - Nobody", "Community - Ripley", "Flavour - Illidan", "Illidan <Old>" }
+    c.env.FojjiCore.voicePacks["Flavour - Illidan"] = { ["Fixate on You"] = "i.ogg" }
+    c.env.FojjiCore.voicePacks["Illidan <Old>"] = { ["Table"] = "x.ogg" }
+    ok(S:ActivePack() == "Flavour - Illidan", "auto prefers Illidan when installed with our lines", tostring(S:ActivePack()))
+    c.env.FojjiCore.voicePacks["Flavour - Illidan"]["Fixate on You"] = nil
+    ok(S:ActivePack() == "Community - Ripley", "but not an Illidan pack without them", tostring(S:ActivePack()))
+    c.env.FojjiCore.voicePackOrder = { "Community - Nobody", "Community - Ripley" }
+    c.env.FojjiCore.voicePacks["Flavour - Illidan"] = nil; c.env.FojjiCore.voicePacks["Illidan <Old>"] = nil
+    -- the short names the stepper shows: the voice, not Fojji's group and guild tags
+    for full, short in pairs({ ["Flavour - Illidan"] = "Illidan", ["Community - Fojji <Numen>"] = "Fojji",
+                               ["Chinese - Stacy"] = "Stacy", ["Joardee - Streamer"] = "Joardee",
+                               ["Arabella"] = "Arabella", ["auto"] = "auto", ["off"] = "off" }) do
+        ok(S:ShortPack(full) == short, "short name: " .. full .. " -> " .. short, S:ShortPack(full))
+    end
     c.env.BiSInnervateDB.voice = "ripley"
     ok(S:ActivePack() == "Community - Ripley", "a saved name still matches through the new prefix")
     c.env.BiSInnervateDB.voice = "brittney"

@@ -72,6 +72,20 @@ function Sound:VoicePacks()
     return out
 end
 
+-- Fojji's display names carry a group in front and a guild tag behind:
+-- "Flavour - Illidan", "Community - Fojji <Numen>", "Joardee - Streamer".
+-- The voice is the word in the middle; that is what a 40 px stepper shows.
+function Sound:ShortPack(name)
+    local s = tostring(name or "")
+    s = s:gsub("%s*<[^>]*>%s*$", "")           -- drop " <Numen>"
+    s = s:gsub("%s+%-%s+Streamer$", "")       -- "Joardee - Streamer" -> Joardee
+    s = s:gsub("^.-%s+%-%s+", "")             -- "Flavour - Illidan" -> Illidan
+    return s
+end
+
+-- the pack auto prefers when it is installed and carries our lines
+Sound.PREFERRED = "Illidan"
+
 function Sound:ActivePack()
     local v = NS.db and NS.db.voice or "auto"
     if v == "off" then return nil end
@@ -82,10 +96,16 @@ function Sound:ActivePack()
         -- away in one update), so auto never names a pack: it takes the first
         -- installed pack that carries our lines, else whatever is first.
         local fc = _G.FojjiCore
-        for _, p in ipairs(packs) do
+        local function carries(p)
             local lines = fc and fc.voicePacks and fc.voicePacks[p]
-            if type(lines) == "table" and lines["Fixate on You"] then return p end
+            return type(lines) == "table" and lines["Fixate on You"]
         end
+        -- Arn's pick first (Illidan, whatever Fojji prefixes it with this
+        -- month), then the first pack that has our lines, then anything
+        for _, p in ipairs(packs) do
+            if self:ShortPack(p) == self.PREFERRED and carries(p) then return p end
+        end
+        for _, p in ipairs(packs) do if carries(p) then return p end end
         return packs[1]
     end
     local lv = string.lower(v)
@@ -144,9 +164,11 @@ end
 -- once-per-0.2 s dedupe so stepping through packs plays each one.
 function Sound:Preview()
     if NS.db and NS.db.sound == false then return false end
-    self._last = self._last or {}
-    self._last.asked = nil
-    self:Play("asked")
+    -- the phrase every FojjiCore pack carries (auto probes for it) and the kit
+    -- id known to exist on this client. "Ready Check" / kit 1115 (the asked
+    -- cue) is in no pack and may not be a sound at all: that was the silence.
+    if self:PlayVoice("Fixate on You") then return true end
+    if PlaySound then pcall(PlaySound, self.KITS.ping, "Master") end
     return true
 end
 
