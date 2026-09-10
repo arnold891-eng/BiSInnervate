@@ -1918,6 +1918,21 @@ do
     ok(#c.prints > 0, "/inn status prints")
     slash(c, "nonsense")
     ok(string.find(c.prints[#c.prints] or "", "commands:", 1, true) ~= nil, "unknown command prints help")
+    -- the version the raid hears (HELLO|ver, the lib's RegisterAddon) is the
+    -- TOC's: NS.VERSION and every "x.y.z" version literal in the sources
+    -- must match it, or a stale number ships to the whole raid
+    local toc = assert(io.open("BiSInnervate.toc")):read("*a")
+    local tocVer = toc:match("## Version:%s*([%d%.]+)")
+    ok(tocVer ~= nil, "the TOC has a version", tocVer)
+    ok(c.NS.VERSION == tocVer, "NS.VERSION is the TOC's", c.NS.VERSION, tocVer)
+    local stale = {}
+    for _, rel in ipairs(H.tocFiles(".")) do
+        local f = io.open(rel); local src = f and f:read("*a"); if f then f:close() end
+        for lit in (src or ""):gmatch('VERSION[^\n]-"(%d+%.%d+%.%d+)"') do
+            if lit ~= tocVer then stale[#stale + 1] = rel .. ":" .. lit end
+        end
+    end
+    ok(#stale == 0, "no source file carries a version literal other than the TOC's", table.concat(stale, ","))
 end
 
 --------------------------------------------------------------------
