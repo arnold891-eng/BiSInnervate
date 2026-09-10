@@ -84,6 +84,94 @@ local KEY_ALIAS = { claimhold = "claimHold", expire = "expire", cancelmana = "ca
 
 local function onoff(v) return v and "|cff4fd0cfon|r" or "|cfff08cb0off|r" end
 
+--------------------------------------------------------------------
+-- the setters. ONE owner per key: the options window and the slash command
+-- both go through these, so the two can never drift. Each does the work and
+-- says it in the prompt (W:Say); the slash handler adds its chat line.
+-- Anything that touches the protected main window goes through the Window
+-- function that already defers to AfterCombat - never a Layout from here.
+--------------------------------------------------------------------
+
+local function say(text, tone) if NS.Window then NS.Window:Say(text, tone) end end
+
+function NS.SetNumber(key, v)
+    -- claimHold / expire / cancelMana / urgentAt / rezDrinkAt / scale, clamped
+    -- to NS.LIMITS (belt and braces: the options stepper clamps on its own)
+    local lk = string.lower(key)
+    local bounds, real = NS.LIMITS[lk], KEY_ALIAS[lk]
+    if not bounds or not real then return nil end
+    v = NS.Clamp(tonumber(v) or NS.DEFAULTS[real], bounds[1], bounds[2])
+    NS.db[real] = v
+    if real == "scale" then NS.Window:ApplyScale() end       -- defers in a fight
+    if real == "rezDrinkAt" and NS.Rez then NS.Rez.last = nil end
+    return v
+end
+function NS.SetScale(v) return NS.SetNumber("scale", v) end
+
+function NS.SetLocked(on)
+    NS.db.locked = on and true or false
+    say(NS.db.locked and "window locked" or "window unlocked", NS.db.locked and "muted" or "ink2")
+end
+
+function NS.SetSound(on)
+    NS.db.sound = on and true or false
+end
+
+function NS.SetChatAlert(on)
+    NS.db.chatAlert = on and true or false
+end
+
+function NS.SetVoice(pack)
+    NS.db.voice = pack
+end
+
+-- animated portraits or flat ones: the repaint is out of combat only
+function NS.SetFaces3D(on)
+    NS.db.portraits3d = on and true or false
+    if not NS.InCombat() then NS.Window:RefreshPortraits(); NS.Window:Refresh() end
+end
+
+function NS.SetFlyoutDir(dir)
+    NS.db.flyoutDir = (dir == "down") and "down" or "up"
+    NS.Window:PlaceFlyout()        -- the secure kit part of it waits for the fight to end
+end
+
+function NS.SetRequesterClass(class, on)
+    NS.db.requesterClasses = NS.db.requesterClasses or {}
+    NS.db.requesterClasses[class] = on and true or false
+    if not NS.InCombat() then NS.Window:Bind() end       -- else AfterCombat binds
+end
+
+-- the rez button's switches: a rebind where the button itself changes
+function NS.SetRez(on)
+    NS.db.rez = on and true or false
+    if NS.Rez then NS.Rez.last = nil end
+    if not NS.InCombat() then NS.Window:Bind() end
+end
+function NS.SetRezHeal(on)
+    NS.db.rezHeal = on and true or false
+    if NS.Rez then NS.Rez.last = nil end
+end
+function NS.SetRezDrink(on)
+    NS.db.rezDrink = on and true or false
+    if NS.Rez then NS.Rez.last = nil end
+end
+function NS.SetRezDrinkLow(on)
+    NS.db.rezDrinkLow = on and true or false
+    if NS.Rez then NS.Rez.last = nil; NS.Rez.shown = nil end
+    if not NS.InCombat() then NS.Window:Bind() end
+end
+function NS.SetRezKeepScores(on)
+    NS.db.rezKeepScores = on and true or false
+end
+function NS.RebuildHeals()
+    NS.Rez:BuildHealTable(); NS.Rez.last = nil
+end
+
+function NS.SetDebug(on)
+    NS.db.debug = on and true or false
+end
+
 function NS.HandleSlash(input)
     input = string.gsub(input or "", "^%s+", "")
     local cmd, rest = string.match(input, "^(%S*)%s*(.*)$")
@@ -189,14 +277,13 @@ function NS.HandleSlash(input)
         NS.Window:ToggleShown()
 
     elseif cmd == "lock" then
-        NS.db.locked = not NS.db.locked
+        NS.SetLocked(not NS.db.locked)
         NS.Print("window " .. (NS.db.locked and "locked." or "unlocked - drag the title bar."))
 
     elseif cmd == "scale" or cmd == "size" then
         local v = tonumber(rest)
         if v then
-            NS.db.scale = NS.Clamp(v, 0.5, 2)
-            NS.Window:ApplyScale()
+            NS.SetScale(v)
             NS.Print("scale " .. NS.db.scale .. (NS.InCombat() and " (applies when the fight ends)" or ""))
         else
             NS.Print("usage: /inn scale 0.5 - 2  (now " .. tostring(NS.db.scale) .. ")")
@@ -209,7 +296,7 @@ function NS.HandleSlash(input)
         NS.Minimap:Toggle()
 
     elseif cmd == "sound" then
-        NS.db.sound = not NS.db.sound
+        NS.SetSound(not NS.db.sound)
         NS.Print("sound " .. onoff(NS.db.sound))
     elseif cmd == "voice" then
         local r = string.lower(rest)
@@ -220,7 +307,7 @@ function NS.HandleSlash(input)
         elseif r == "test" then
             NS.Sound:Test()
         else
-            NS.db.voice = rest
+            NS.SetVoice(rest)
             NS.Print("voice: " .. rest .. " -> " .. tostring(NS.Sound:ActivePack() or "none"))
         end
     elseif cmd == "mages" or cmd == "odiss" then
@@ -229,9 +316,25 @@ function NS.HandleSlash(input)
         NS.Window:SetHealerOnly(not NS.db.healerOnly)
 
     elseif cmd == "faces" or cmd == "3d" then
-        NS.db.portraits3d = not NS.db.portraits3d
-        NS.Window:RefreshPortraits(); NS.Window:Refresh()
+        NS.SetFaces3D(not NS.db.portraits3d)
         NS.Print("3D faces " .. onoff(NS.db.portraits3d))
+
+    elseif cmd == "callers" then
+        -- who may ask for an innervate. Seven classes is too many rows for the
+        -- options window, so this lives here: /inn callers lists, /inn callers
+        -- warlock flips one
+        local class = string.upper(rest)
+        if class ~= "" and NS.REQUESTER_CLASSES[class] ~= nil then
+            NS.SetRequesterClass(class, not NS.IsRequesterClass(class))
+        elseif class ~= "" then
+            NS.Print("usage: /inn callers [mage|priest|paladin|shaman|druid|warlock|hunter]")
+            return
+        end
+        local parts = {}
+        for _, c in ipairs({ "MAGE", "PRIEST", "PALADIN", "SHAMAN", "DRUID", "WARLOCK", "HUNTER" }) do
+            parts[#parts + 1] = string.lower(c) .. " " .. onoff(NS.IsRequesterClass(c))
+        end
+        NS.Print("who may call: " .. table.concat(parts, ", "))
 
     elseif cmd == "set" then
         local key, val = string.match(rest, "^(%S+)%s+(%S+)$")
@@ -239,9 +342,8 @@ function NS.HandleSlash(input)
         key = key and string.lower(key)
         local bounds = NS.LIMITS[key or ""]
         if key and val and bounds then
-            NS.db[KEY_ALIAS[key]] = NS.Clamp(val, bounds[1], bounds[2])
+            NS.SetNumber(key, val)
             NS.Print(KEY_ALIAS[key] .. " = " .. NS.db[KEY_ALIAS[key]])
-            if key == "scale" then NS.Window:ApplyScale() end
         else
             NS.Print("usage: /inn set claimHold|expire|cancelMana|urgentAt|drinkAt|scale <number>")
         end
@@ -285,16 +387,19 @@ function NS.HandleSlash(input)
 
     elseif cmd == "demo" then
         NS.Demo:Toggle()
+    elseif cmd == "version" then
+        NS.Print("|cffb980ffBiS Innervate|r v" .. NS.VERSION .. "  (protocol " .. NS.PROTOCOL .. ")")
     elseif cmd == "debug" then
-        NS.db.debug = not NS.db.debug
+        NS.SetDebug(not NS.db.debug)
         NS.Print("debug " .. onoff(NS.db.debug))
 
     else
         NS.Print("rez: /inn rez (rez me first, or what the button does) | rezzers | rezlist | rezheals | rezsizes | rezscore | rezreset | bind <KEY> | unbind")
         NS.Print("commands: /inn (ask innervate) | tide | lust | drums | rez | cancel | show | hide | lock | scale <n> | " ..
-                 "config | minimap | sound | voice [list|<pack>|off|auto|test] | faces | mages | healer | " ..
-                 "set <key> <n> | reset | status | demo | debug")
+                 "config | minimap | sound | voice [list|<pack>|off|auto|test] | faces | mages | healer | callers [class] | " ..
+                 "set <key> <n> | reset | status | version | demo | debug")
     end
-    -- the window and the commands write the same keys; keep an open window honest
-    if NS.Config and NS.Config.frame and NS.Config.frame:IsShown() then NS.Config:Refresh() end
+    -- the window and the commands go through the same setters; an open window
+    -- repaints so it agrees with what a slash just did
+    if NS.Config then NS.Config:Refresh() end
 end

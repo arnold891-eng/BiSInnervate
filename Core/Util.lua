@@ -79,6 +79,12 @@ function NS.T.Console(fs, opts)
     if real and real.Console then return real.Console(fs, opts) end
     return nil
 end
+-- the shared options window (Libs\BiSTheme\Options.lua, embedded the same way)
+function NS.T.Options(name, w, title)
+    local real = _G.BiSTheme
+    if real and real.Options then return real.Options(name, w, title) end
+    return nil
+end
 
 -- The two things a raider can hand out.
 --   INNERVATE: druid, single target, 6 min.

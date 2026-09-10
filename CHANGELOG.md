@@ -1,5 +1,20 @@
 # BiS Innervate
 
+## 3.3.7
+
+- **The options window is the house one** (`Libs\BiSTheme\Options.lua`): one narrow flat window,
+  no tabs - the minimap button and the BiS channel switch, then window (scale, lock, Odiss and Neb
+  mode, faces, drums), the rez button, alerts and the voice pack (a stepper that plays each pack as
+  you land on it), and the call timings. Every change says itself in the window's `BiS>` prompt,
+  not in chat. The old five-page panel is gone.
+- What did not fit a box, a switch or a stepper is a slash command now: `/inn callers [class]` (who
+  may ask), `/inn version`; the rezzer list, the heal list, the scoreboard and the keybind were
+  already `/inn rezzers`, `rezheals`, `rezscore`, `bind`. The About page's version is on the
+  minimap tooltip.
+- Every option goes through the function its slash command uses (`NS.Set*`), so the two cannot
+  drift; the suite clicks every control mid-fight and holds it to zero protected calls.
+- 582 checks, both ways; 59 for the kit itself.
+
 ## 3.3.6
 
 - **The title is the `BiS>` prompt** (the house header, `Libs\BiSTheme\Console.lua`). It

@@ -66,7 +66,7 @@ end
 function Mini:Tooltip(b)
     if not GameTooltip then return end
     GameTooltip:SetOwner(b, "ANCHOR_LEFT")
-    GameTooltip:AddLine("BiS |cffb980ffInnervate|r")
+    GameTooltip:AddLine(NS.T.text("accent", "BiS") .. " Innervate " .. NS.T.text("muted", NS.VERSION))
     GameTooltip:AddLine("Left: show / hide the window", 1, 1, 1)
     GameTooltip:AddLine("Right: options", 1, 1, 1)
     GameTooltip:AddLine("Shift-left: status in chat", 0.7, 0.7, 0.7)

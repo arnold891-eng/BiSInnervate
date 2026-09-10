@@ -365,51 +365,128 @@ do
     ok(n == 0, "and so are the fake calls")
 end
 
-section("14. the options window")
+section("14. the options window: the shared kit, every set through its owner")
 do
     local w = raid(BASE)
     local c = w.clients.Healer3
     local C, db = c.NS.Config, c.env.BiSInnervateDB
     local okB, err = pcall(function() C:Build() end)
     ok(okB, "it builds", err)
+    ok(c.env.BiSTheme and c.env.BiSTheme.OPTIONS_MINOR == 1, "on Libs/BiSTheme/Options.lua minor 1, loaded the TOC way")
+    local f = C.frame
+    ok(not f:IsShown(), "hidden until asked")
     slash(c, "config")
-    ok(C.frame:IsShown(), "/inn config opens it")
+    ok(f:IsShown(), "/inn config opens it")
     slash(c, "config")
-    ok(not C.frame:IsShown(), "and closes it")
-    for _, name in ipairs(C.PAGES) do
-        C:ShowTab(name)
-        local shown = 0
-        for _, p in pairs(C.pages) do if p:IsShown() then shown = shown + 1 end end
-        ok(shown == 1 and C.pages[name]:IsShown(), "tab " .. name .. " shows only its page")
+    ok(not f:IsShown(), "and closes it")
+    click(c.NS.Window.cfgBtn)
+    ok(f:IsShown(), "the cfg tab opens it")
+    click(f.closeBtn)
+    ok(not f:IsShown(), "x closes it")
+    -- the shape: one narrow flat window, sections then rows, no tabs
+    local O = c.env.BiSTheme.OPTIONS
+    local sections, rows = 0, 0
+    for _, r in ipairs(f.rows) do if r.isSection then sections = sections + 1 else rows = rows + 1 end end
+    ok(sections == 5 and rows == 24, "five sections, twenty-four options", sections, rows)
+    ok(f:GetWidth() == O.W and f:GetHeight() == O.HEADER + #f.rows * O.ROW + O.PAD, "230 wide, sized to its rows", f:GetHeight())
+    ok(f.rows[1].isSection and f.rows[1].name:GetText():find("innervate", 1, true), "the addon's own section comes first")
+    -- every label fits its budget untrimmed: the ellipsis is the net, not the plan
+    local wide = {}
+    for _, r in ipairs(f.rows) do
+        local budget = r.isSection and (O.W - 6 - O.CTL) or (O.W - O.INDENT - O.CTL)
+        if r.name:GetStringWidth() > budget or tostring(r.name:GetText()):find("%.%.%.$") then wide[#wide + 1] = tostring(r.name:GetText()) end
     end
-
+    ok(#wide == 0, "every label fits the kit's budget, none trimmed", table.concat(wide, " | "))
+    -- the settings, through the same owners the slash commands use
     C:Set("scale", 5)
     ok(db.scale == 2, "scale clamps at 2", db.scale)
     ok(c.NS.Window.frame:GetScale() == 2, "and the window actually resized")
     C:Set("scale", 1)
-    C:Set("shown", false)
-    ok(db.hidden == true, "unticking shown is exactly the x", tostring(db.hidden))
-    ok(c.NS.Window.frame:GetAlpha() == 0, "window faded")
-    ok(face(c, "Kumlust")._mouse == false, "and its faces went deaf")
-    C:Set("shown", true)
-    ok(not db.hidden and face(c, "Kumlust")._mouse == true, "ticking it brings both back")
-    C:Set("voice", "off")
-    ok(db.voice == "off" and c.NS.Sound:ActivePack() == nil, "voice off")
-    C:Set("voice", "auto")
-    C:Set("classPALADIN", false)
-    ok(c.NS.IsRequesterClass("PALADIN") == false, "a class can be switched off")
-    C:Set("classPALADIN", true)
+    C:Set("voice", #C:VoiceList())
+    ok(db.voice == "off" and c.NS.Sound:ActivePack() == nil, "the voice stepper's last stop is off", db.voice)
+    w:Advance(1)                 -- the same cue inside 0.2 s is one cue
+    local heard = #c.sounds
+    C:Set("voice", 1)
+    ok(db.voice == "auto", "and its first is auto")
+    ok(#c.sounds > heard, "landing on a pack plays it, so you hear what you picked", #c.sounds - heard)
     C:Set("claimHold", 1)
     ok(db.claimHold == 3, "claimHold clamps to 3", db.claimHold)
     C:Set("sound", false)
     ok(db.sound == false, "sound off")
     C:Set("sound", true)
+    C:Set("locked", true)
+    ok(db.locked == true, "lock")
+    C:Set("locked", false)
+    C:Set("portraits3d", true)
+    ok(db.portraits3d == true and C:Get("portraits3d") == true, "faces 3D through the seg")
+    C:Set("portraits3d", false)
+    -- a side effect, not just the key: the minimap button really goes
+    C:Set("minimap", false)
+    ok(db.minimap == false and c.NS.Minimap.button and not c.NS.Minimap.button:IsShown(), "minimap off hides the button")
+    C:Set("minimap", true)
+    ok(c.NS.Minimap.button:IsShown(), "and on shows it")
+    -- the slash and the row agree: /inn lock flips what the row reads
+    slash(c, "lock")
+    ok(C:Get("locked") == true, "/inn lock and the row read the same key")
+    slash(c, "lock")
+    -- who may call moved to a slash: seven classes are too many rows
+    slash(c, "callers paladin")
+    ok(c.NS.IsRequesterClass("PALADIN") == false, "/inn callers paladin switches a class off")
+    slash(c, "callers paladin")
+    ok(c.NS.IsRequesterClass("PALADIN") == true, "and back")
+    ok(C.byKey.classPALADIN == nil, "and it is not a row")
+    -- the BiS channel switch is the user's own, same as /biscomm
+    C:Set("comm", false)
+    ok(not c.env.LibBiSComm:Enabled(), "the channel toggle is the lib's switch")
+    C:Set("comm", true)
+    -- a real click on a row goes to the prompt, never to chat
+    local before = #c.prints
+    local row
+    for _, r in ipairs(f.rows) do if r.opt and r.opt.key == "sound" then row = r end end
+    click(row.ctl); click(row.ctl)
+    ok(#c.prints == before, "a click says itself in the prompt, not in chat", #c.prints - before)
+    ok(db.sound == true, "and round-trips")
+    -- a fifth control kind is refused
+    ok(not pcall(function() f:Row({ kind = "slider", label = "nope" }, db) end), "a fifth kind is refused outright")
+    -- the About page is gone: the version lives on the minimap tooltip and /inn version
+    slash(c, "version")
+    ok((c.prints[#c.prints] or ""):find(c.NS.VERSION, 1, true) ~= nil, "/inn version prints the version", c.prints[#c.prints])
+end
 
-    -- the paint, not the call
-    local r = C.hx("b980ff")
-    C:ShowTab("Window")
-    ok(C.tabs.Window.label._color and math.abs(C.tabs.Window.label._color[1] - r) < 0.01,
-       "the active tab label is accent-coloured")
+section("14b. every option clicked mid-fight: not one protected call")
+do
+    local w = raid(BASE)
+    local c = w.clients.Healer1
+    local C = c.NS.Config
+    C:Build()
+    w:SetCombat(true)
+    local okOpen, err = pcall(function() C:Toggle(true) end)
+    ok(okOpen and C.frame:IsShown(), "the window opens in combat (no secure children)", err)
+    local errs, clicked = {}, 0
+    for _, r in ipairs(C.frame.rows) do
+        if r.opt then
+            local ctls = {}
+            if r.opt.kind == "seg" then for _, s in ipairs(r.ctl) do ctls[#ctls + 1] = s end
+            elseif r.opt.kind == "step" then ctls[1], ctls[2] = r.ctl.plus, r.ctl.minus
+            else ctls[1] = r.ctl end
+            for _, b in ipairs(ctls) do
+                local okC, e = pcall(function() click(b) end)
+                clicked = clicked + 1
+                if not okC then errs[#errs + 1] = r.opt.key .. ": " .. tostring(e) end
+            end
+            -- toggles and segs back to where they were, so one click's state
+            -- does not hide the next one's fault
+            if r.opt.kind == "toggle" then pcall(function() click(r.ctl) end) end
+        end
+    end
+    ok(clicked >= 30, "every control got a click", clicked)
+    ok(#errs == 0, "no LOCKDOWN VIOLATION from any of them", table.concat(errs, " | "))
+    -- the deferred ones are pending, not done: the fight's end applies them
+    ok(c.NS.Window.frame:GetScale() == 1, "the scale did not touch the protected frame mid-fight")
+    w:SetCombat(false)
+    w:Advance(1)
+    ok(pcall(function() C:Refresh() end), "and a repaint after the fight is clean")
+    slash(c, "reset")
 end
 
 section("15. a saved scale survives a reload in the same place")
@@ -603,9 +680,9 @@ do
     local w = raid(BASE)
     local C = w.clients.Healer3.NS.Config
     C:Build()
-    ok(C.controls.reset == nil and C.controls.demo == nil, "reset and demo are not in the control list")
-    ok(C:Set("reset", true) == false, "so ConfigSet cannot fire them")
-    ok(C.actions and C.actions.reset ~= nil, "they live under actions")
+    ok(C.byKey.reset and C.byKey.reset.kind == "button" and C.byKey.reset.action ~= nil, "reset is a button row with an action")
+    ok(C:Set("reset", true) == false, "so Config:Set cannot fire it")
+    ok(C:Run("reset") == true, "Config:Run does")
 end
 
 section("26. it stays small")
@@ -1624,12 +1701,12 @@ do
     ok(m.NS.Tracker.providers.REZ.Healer1 ~= nil and m.NS.Tracker.providers.FOO == nil, "an unknown kind in a HELLO is ignored, the known one lands")
 end
 
-section("46. the rez page of the options window")
+section("46. the rez section of the options window")
 do
     local w = rezRaid()
     local c = w.clients.Healer1
     local C, db = c.NS.Config, c.env.BiSInnervateDB
-    ok(pcall(function() C:Build(); C:ShowTab("Rez"); C:Refresh() end), "it builds and refreshes")
+    ok(pcall(function() C:Build(); C:Refresh() end), "it builds and refreshes")
     for _, id in ipairs({ "rez", "rezHeal", "rezDrink", "rezKeepScores" }) do
         local was = C:Get(id)
         C:Set(id, false); local off = C:Get(id) == false
@@ -1641,8 +1718,11 @@ do
     ok(db.rez == false and not c.NS.Rez:Enabled() and rezBtn(c)._attrs["*type1"] == nil, "switching the button off unwires it")
     C:Set("rez", true)
     ok(rezBtn(c)._attrs["*type1"] == "macro", "and on wires it again")
-    ok(C.controls.rezRescan == nil and C.actions.rezRescan and C.actions.rezScore and C.actions.rezReset, "the buttons are actions")
-    ok(pcall(function() C:Run("rezRescan"); C:Run("rezScore"); C:Run("rezReset") end), "and run")
+    ok(C.byKey.rezRescan.kind == "button", "rebuild is a button")
+    ok(pcall(function() C:Run("rezRescan") end), "and runs")
+    ok(C.byKey.rezRescan.label:find("all ranks", 1, true), "its label carries the show-all-ranks reminder", C.byKey.rezRescan.label)
+    -- the scoreboard and the lists moved to chat: they were text, not controls
+    ok(C.byKey.rezScore == nil and C.byKey.rezReset == nil, "print / clear scoreboard are /inn rezscore, rezreset")
 end
 
 section("47. an override keybind, stored and re-applied")
@@ -1753,35 +1833,34 @@ do
     ok(pulsing(face(w.clients.Healer3, "Oldie")), "its innervate call pulses on a 3.3 druid's screen")
 end
 
-section("51. nothing on any options page overlaps or runs off its column")
+section("51. the options window is the kit's shape, and the layout checker still has teeth")
 do
-    -- a shaman whose spellbook shows every rank: the longest heal text there is
     local w = rezRaid()
     local sh = w.clients.Healer2
-    local book = {}
-    for i = 1, 10 do
-        book[#book + 1] = { "Lesser Healing Wave", "Rank " .. i, 8000 + i, "Heals a friendly target for " .. (100 * i) .. " to " .. (120 * i) .. "." }
-        book[#book + 1] = { "Healing Wave", "Rank " .. i, 25300 + i, "Heals a friendly target for " .. (300 * i) .. " to " .. (350 * i) .. "." }
-    end
-    book[#book + 1] = { "Chain Heal", "Rank 5", 25423, "Heals a friendly target for 1055 to 1205." }
-    book[#book + 1] = { "Ancestral Spirit", "Rank 5", 2008 }
-    w.book.Healer2 = book
-    w.bonusHealing.Healer2 = 2118
-    sh.NS.Rez:BuildHealTable()
-    ok(#sh.NS.Rez.heals == 20, "twenty heal ranks in the table", #sh.NS.Rez.heals)
     local C = sh.NS.Config
     C:Build(); C:Refresh()
-    for _, name in ipairs(C.PAGES) do
-        local problems = H.CheckLayout(C.pages[name], C.frame)
-        ok(#problems == 0, "page " .. name .. " lays out clean", table.concat(problems, "; "))
+    local f = C.frame
+    local O = sh.env.BiSTheme.OPTIONS
+    -- no row runs under its control: label right edge <= W - CTL
+    local bad = {}
+    for _, r in ipairs(f.rows) do
+        local x = r.isSection and 6 or O.INDENT
+        if x + r.name:GetStringWidth() > O.W - O.CTL then bad[#bad + 1] = tostring(r.name:GetText()) end
+    end
+    ok(#bad == 0, "no label reaches its control", table.concat(bad, " | "))
+    -- every step value fits between < and >
+    for _, r in ipairs(f.rows) do
+        if r.opt and r.opt.kind == "step" then
+            ok(r.ctl.val:GetStringWidth() <= O.STEP_V, "step value fits: " .. r.opt.label, r.ctl.val:GetText())
+        end
     end
     -- the check itself has teeth: a label made too long is caught
-    local page = C.pages.Rez
+    local page = sh.NS.Window.frame
     local long = sh.env.CreateFrame("Frame", nil, page)
     long:SetSize(100, 20); long:SetPoint("TOPLEFT", page, "TOPLEFT", 0, -5)
     local t = long:CreateFontString(); t:SetFont("Fonts\\FRIZQT__.TTF", 12); t:SetPoint("LEFT", long, "LEFT", 0, 0)
     t:SetText(string.rep("wide ", 40))
-    local problems = H.CheckLayout(page, C.frame)
+    local problems = H.CheckLayout(long, page)
     ok(#problems > 0, "a too-wide label and an overlapping frame are reported", #problems)
     long:Hide(); t:Hide()
 end
