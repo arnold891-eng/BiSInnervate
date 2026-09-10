@@ -7,10 +7,32 @@
 
 local M = {}
 
-local ADDON_FILES = {
+-- the load order is the TOC's, read at run time, so a file added to the TOC is
+-- under test the moment it ships. The three Ace-shaped libs are stubbed by
+-- this harness (LibStub is absent on purpose - Rez.lua guards on it) and
+-- skipped; every other Libs\ entry (Console.lua, LibBiSComm) loads for real,
+-- the way the client does it. An old build (world.rootFor) has no TOC in its
+-- folder and gets the fixed 3.x list.
+local SKIP_LIBS = { LibStub = true, ["CallbackHandler-1.0"] = true, ["LibHealComm-4.0"] = true }
+local OLD_FILES = {
     "Core/Util.lua", "Core/Comm.lua", "Core/Tracker.lua", "Core/Sound.lua", "Core/Calls.lua",
     "Core/Rez.lua", "UI/Window.lua", "UI/Minimap.lua", "UI/Config.lua", "Core/Demo.lua", "Core/Options.lua", "Core/Init.lua",
 }
+local function tocFiles(root)
+    local f = io.open(root .. "/BiSInnervate.toc", "r")
+    if not f then return nil end
+    local out = {}
+    for line in f:lines() do
+        line = line:gsub("\r$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+        if line ~= "" and not line:find("^##") and not line:find("^#") then
+            local rel = line:gsub("\\", "/")
+            local lib = rel:match("^Libs/([^/]+)/")
+            if not (lib and SKIP_LIBS[lib]) then out[#out + 1] = rel end
+        end
+    end
+    return out
+end
+M.tocFiles = tocFiles
 
 local World = {}
 World.__index = World
@@ -979,7 +1001,8 @@ function World:NewClient(name, class, hasAddon)
     -- world.rootFor[name] loads an older build for this one client (a raider
     -- who has not updated): dev/old-3.2 has no Core/Rez.lua, so it is skipped
     local root = (world.rootFor and world.rootFor[name]) or world.root
-    for _, rel in ipairs(ADDON_FILES) do
+    local files = tocFiles(root) or OLD_FILES
+    for _, rel in ipairs(files) do
         local path = root .. "/" .. rel
         local chunk, err = loadfile(path)
         if not chunk and root ~= world.root and rel == "Core/Rez.lua" then chunk = function() end end
