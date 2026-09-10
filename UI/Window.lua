@@ -156,23 +156,20 @@ function W:Build()
     hair:SetPoint("BOTTOMLEFT"); hair:SetPoint("BOTTOMRIGHT"); hair:SetHeight(1)
     hair:SetColorTexture(W.col("edge", 1))
 
-    local logo = head:CreateTexture(nil, "ARTWORK")
-    logo:SetSize(11, 11)
-    logo:SetPoint("LEFT", head, "LEFT", 4, 0)
-    logo:SetTexture("Interface\\Icons\\Spell_Nature_Lightning")
-    if logo.SetTexCoord then logo:SetTexCoord(0.07, 0.93, 0.07, 0.93) end
-    self.logo = logo
-
-    local title = W.text(head, "BiS |cffb980ffInnervate|r", 9, "ink")
-    title:SetPoint("LEFT", logo, "RIGHT", 4, 0)
+    -- the title is the BiS> prompt (the header law): no logo, the prompt is
+    -- the brand. It cycles the standing slots - the name, who is online, what
+    -- the window is doing - and events jump in over them. Wrapped below, once
+    -- the H button exists to measure the budget against.
+    local title = W.text(head, "BiS> ", 9, "ink")
+    title:SetPoint("LEFT", head, "LEFT", 4, 0)
     self.title = title
 
-    -- the title cycles between who is online with the addon (green) and
-    -- what the window is doing; this invisible strip over it gives the names
-    -- on hover and prints them on a click
+    -- the console's words are a plain FontString with no hit area, so this
+    -- invisible strip over the prompt keeps the title's interactions: the
+    -- online list on hover, shift-click prints it, and a drag moves the window
     local online = CreateFrame("Button", nil, head)
     online:SetHeight(12)
-    online:SetPoint("LEFT", logo, "RIGHT", 2, 0)
+    online:SetPoint("LEFT", head, "LEFT", 2, 0)
     -- shift-click prints; a plain drag on it moves the window like the rest
     -- of the title bar (the strip is a Button, and a Button eats the drag)
     online:SetScript("OnClick", function() if IsShiftKeyDown and IsShiftKeyDown() then W:PrintOnline() end end)
@@ -199,10 +196,14 @@ function W:Build()
     self.healerBtn = self:HeaderButton(head, -52, "H", "Healer mode  (Neb mode)",
         "Just the rez / heal / drink button, nothing else - no faces, no ask buttons. /inn healer",
         function() W:SetHealerOnly(not NS.db.healerOnly) end)
-    -- the title ends where H begins: one line, clipped, never under a button
-    title:SetPoint("RIGHT", self.healerBtn, "LEFT", -3, 0)
-    title:SetWordWrap(false)
     online:SetPoint("RIGHT", self.healerBtn, "LEFT", -3, 0)
+    -- header budget: the window is W.width (152) wide; H sits at RIGHT -52 and
+    -- is 12 wide, so its left edge is 64 in from the right; the prompt starts
+    -- 4 in from the left and wants 3 of air before H:
+    --   152 - 64 - 4 - 3 = 81 clear, held at 76 so a long word has air
+    self.TITLE_W = self.width - 64 - 4 - 3 - 5
+    self.con = T.Console(title, { width = self.TITLE_W })
+    if self.con then self.con:Set("name", "Innervate", "accent") end
     self:PaintHeader()
 
     -- body
@@ -287,52 +288,26 @@ function W:PrintOnline()
     NS.Print(#list .. " with the addon: " .. table.concat(parts, ", "))
 end
 
--- the two things the title says, cycled with a fade (text and alpha only:
--- safe in a fight). Slot 1 is who is online with the addon, in green; slot 2
--- is what the window is doing, or the name when there is nothing.
-W.TITLE_HOLD, W.TITLE_FADE = 2.5, 0.4
-
-function W:TitleMessages()
+-- the prompt's standing slots: the name (set once), who is online (green),
+-- what the window is doing (PaintTitle). Ticked from Init: text and alpha
+-- only, so it keeps going in a fight. Chat is for /inn answers; what the
+-- window is up to is said here (con:Say).
+function W:TickTitle()
+    local con = self.con
+    if not con or not self.title or not self.title:IsShown() then return end
     local n = #self:OnlineList()
-    local online = "|TInterface\\TargetingFrame\\UI-RaidTargetingIcon_4:11:11:0:0|t" .. T.text("good", n .. " online")
-    return { online, self._actionText or "BiS |cffb980ffInnervate|r" }
+    if n ~= self._onlineN then
+        self._onlineN = n
+        con:Set("online", n .. " online", "good")
+    end
+    con:Paint()
 end
 
-function W:TickTitle(now)
-    local t = self.title
-    if not t or not t:IsShown() then return end
-    now = now or NS.Now()
-    local st = self._title
-    if not st then
-        st = { idx = 2, at = now, phase = "hold", shown = self:TitleMessages()[2] }
-        self._title = st
-        t:SetText(st.shown); t:SetAlpha(1)
-        return
-    end
-    local msgs = self:TitleMessages()
-    -- the action changed under us: show it now, no fade
-    if st.idx == 2 and msgs[2] ~= st.shown and st.phase == "hold" then
-        st.shown = msgs[2]; t:SetText(msgs[2]); t:SetAlpha(1)
-        st.at = now
-        return
-    end
-    local el = now - st.at
-    if st.phase == "hold" then
-        if el >= self.TITLE_HOLD then st.phase, st.at = "out", now end
-    elseif st.phase == "out" then
-        local a = 1 - math.min(1, el / self.TITLE_FADE)
-        t:SetAlpha(a)
-        if a <= 0 then
-            st.idx = (st.idx == 1) and 2 or 1
-            st.shown = msgs[st.idx]
-            t:SetText(st.shown)
-            st.phase, st.at = "in", now
-        end
-    else
-        local a = math.min(1, el / self.TITLE_FADE)
-        t:SetAlpha(a)
-        if a >= 1 then st.phase, st.at = "hold", now end
-    end
+-- what the window is doing goes to the prompt; when the prompt is off screen
+-- (compact modes, no window yet) chat is the fallback so nothing is swallowed
+function W:Say(text, colour)
+    if self.con and self.title and self.title:IsShown() then self.con:Say(text, colour)
+    else NS.Print(text) end
 end
 
 -- the title bar per mode. Everything here is insecure, so it may run in a
@@ -361,11 +336,11 @@ function W:PaintHeader()
     -- the narrow bar has room for the three glyphs and nothing else
     if compact then
         self.cfgBtn:Hide(); self.title:Hide()
-        if self.logo then self.logo:Hide() end
+        if self.con then self.con.words:Hide() end
         if self.onlineBtn then self.onlineBtn:Hide() end
     else
         self.cfgBtn:Show(); self.title:Show()
-        if self.logo then self.logo:Show() end
+        if self.con then self.con.words:Show() end
         if self.onlineBtn then self.onlineBtn:Show() end
     end
 end
@@ -405,7 +380,7 @@ function W:SetHealerOnly(on)
         NS.Print((on and "Neb mode" or "everyone") .. " - when this fight ends.")
     else
         self:Bind()
-        NS.Print(on and "Neb mode: just the rez button." or "everyone with the addon.")
+        self:Say(on and "Neb mode" or "everyone", "muted")
     end
     if NS.Config and NS.Config.frame and NS.Config.frame:IsShown() then NS.Config:Refresh() end
 end
@@ -423,7 +398,7 @@ function W:SetMagesOnly(on)
         NS.Print((on and "mages only" or "everyone") .. " - when this fight ends.")
     else
         self:Bind()
-        NS.Print(on and "mages only." or "everyone with the addon.")
+        self:Say(on and "mages only" or "everyone", "muted")
     end
     if NS.Config and NS.Config.frame and NS.Config.frame:IsShown() then NS.Config:Refresh() end
 end
@@ -818,13 +793,13 @@ function W:PickDrum(t)
     if not NS.MyDrums()[t] then NS.Print("you do not carry " .. NS.DRUM[t].name .. ".") return end
     self.drumPick = t
     if NS.InCombat() then
-        NS.Print(NS.DRUM[t].name .. " when this fight ends.")
+        self:Say(NS.DRUM[t].name .. " when this fight ends.", "muted")
         return
     end
     self:RebindDrums(true)
     self:HideKit()
     self:PaintKit()
-    NS.Print("drum button: " .. NS.DRUM[t].name .. ".")
+    self:Say("drums: " .. NS.DRUM[t].name, "gold")
 end
 
 function W:HideFlyout()
@@ -1278,16 +1253,22 @@ end
 -- so it may run in a fight.
 function W:PaintTitle()
     if not self.title then return end
+    -- the action slot: plain words (the console trims plain words only, so
+    -- no class colour inside), coloured by meaning
     local d = NS.Rez and NS.Rez:Active() and NS.Rez.last
-    local txt
+    local txt, colour
     if d and d.action == "rez" then
-        txt = T.text("good", "rez ") .. NS.ClassColored(d.target, d.targetClass)
+        txt, colour = "rez " .. tostring(d.target), "good"
     elseif d and d.action == "heal" then
-        txt = T.text("gold", "heal ") .. NS.ClassColored(d.target, d.targetClass)
+        txt, colour = "heal " .. tostring(d.target), "gold"
     elseif d and d.action == "drink" then
-        txt = T.text("slate", "drink")
+        txt, colour = "drink", "slate"
     end
     self._actionText = txt
+    if self.con and (txt ~= self._actionShown) then
+        self._actionShown = txt
+        self.con:Set("action", txt, colour)
+    end
 end
 
 -- 3D model frames ignore parent alpha: show and hide them by hand

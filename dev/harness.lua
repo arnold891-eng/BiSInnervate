@@ -778,6 +778,14 @@ function World:NewClient(name, class, hasAddon)
             return (self._w or w), lines * size * 1.25, false
         end
         function fs:GetFont() return self._font, self._size end
+        function fs:GetParent() return self._owner end
+        -- what the BiS> console measures against its budget: colour escapes
+        -- are not glyphs, and the width follows the font size SetFont recorded
+        function fs:GetStringWidth()
+            local t = string.gsub(tostring(self._text or ""), "|c%x%x%x%x%x%x%x%x", "")
+            t = string.gsub(t, "|r", "")
+            return #t * (self._size or 12) * 0.5
+        end
         setmetatable(fs, { __index = function(_, k)
             if type(k) == "string" and string.match(k, "^%u") then return function() end end
             return nil
@@ -1011,6 +1019,9 @@ function World:NewClient(name, class, hasAddon)
         chunk("BiSInnervate", NS)
     end
     client.slash = env.SlashCmdList
+    -- dev/theme.lua hooks here: a wrong-on-purpose palette after the addon
+    -- files loaded, to prove the theme is read per call and never captured
+    if M.afterLoad then M.afterLoad(env, client) end
     return client
 end
 
