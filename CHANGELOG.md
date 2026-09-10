@@ -18,7 +18,8 @@
 - Voice packs show as the voice - `Illidan`, `Fojji`, `Stacy` - not Fojji's `Flavour - ` /
   `Community - <Numen>` wrapping, which is all a 40 px stepper had room for. `auto` prefers
   Illidan when it is installed and carries our lines, then any pack that does, then the first.
-- 594 checks, both ways; 59 for the kit itself.
+- Escape closes the options window (the kit, minor 2 - every BiS addon gets it as they copy out).
+- 595 checks, both ways; 61 for the kit itself.
 
 ## 3.3.6
 

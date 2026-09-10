@@ -372,7 +372,7 @@ do
     local C, db = c.NS.Config, c.env.BiSInnervateDB
     local okB, err = pcall(function() C:Build() end)
     ok(okB, "it builds", err)
-    ok(c.env.BiSTheme and c.env.BiSTheme.OPTIONS_MINOR == 1, "on Libs/BiSTheme/Options.lua minor 1, loaded the TOC way")
+    ok(c.env.BiSTheme and c.env.BiSTheme.OPTIONS_MINOR == 2, "on Libs/BiSTheme/Options.lua minor 2, loaded the TOC way")
     local f = C.frame
     ok(not f:IsShown(), "hidden until asked")
     slash(c, "config")
@@ -383,6 +383,9 @@ do
     ok(f:IsShown(), "the cfg tab opens it")
     click(f.closeBtn)
     ok(not f:IsShown(), "x closes it")
+    local esc = false
+    for _, n in ipairs(c.env.UISpecialFrames) do if n == "BiSInnervateOptions" then esc = true end end
+    ok(esc, "and it is in UISpecialFrames, so Escape closes it")
     -- the shape: one narrow flat window, sections then rows, no tabs
     local O = c.env.BiSTheme.OPTIONS
     local sections, rows = 0, 0

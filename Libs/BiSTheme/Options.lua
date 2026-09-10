@@ -40,8 +40,8 @@
 
 BiSTheme = BiSTheme or {}
 local T = BiSTheme
-if (T.OPTIONS_MINOR or 0) >= 1 then return end
-T.OPTIONS_MINOR = 1
+if (T.OPTIONS_MINOR or 0) >= 2 then return end
+T.OPTIONS_MINOR = 2      -- 2: Escape closes the window (UISpecialFrames), Arn 10 Sep
 
 -- palette fallback: only when this file is embedded and neither BiSTheme.lua nor
 -- Console.lua ran. Same table, same values, deliberately duplicated - a shared
@@ -443,6 +443,16 @@ function T.Options(name, w, title)
   -- A new frame is shown by default and the toggle is what decides. The harness
   -- caught this on the Hub's first day.
   f:Hide()
+
+  -- Escape closes it, like every Blizzard panel (Arn, 10 Sep: "if you press esc
+  -- it should close that option window" - on every BiS addon). The client
+  -- closes the newest shown frame in UISpecialFrames on Escape; a name is
+  -- required, and T.Options always has one.
+  if name and UISpecialFrames then
+    local listed = false
+    for _, n in ipairs(UISpecialFrames) do if n == name then listed = true end end
+    if not listed then table.insert(UISpecialFrames, name) end
+  end
 
   if f.con then
     f:SetScript("OnUpdate", function(_, dt)
