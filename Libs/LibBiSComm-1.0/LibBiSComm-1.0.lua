@@ -18,12 +18,13 @@
 --   SUM   |state|summoner|area|left      OFFER / OK / NO on a summon offer
 --
 -- House rules, in the lib so they cannot drift addon to addon:
---   * draws nothing, prints nothing (one /bis for status and the off switch)
+--   * draws nothing, prints nothing (one /biscomm for status and the off switch;
+--     /bis belongs to LoonBestInSlot on the raid's clients - minor 4 gave it back)
 --   * no periodic chatter: WHERE pushes on a real change, otherwise it answers
 --   * every host callback is pcall'd -- a lib fault cannot kill the addon
 --   * off means silent AND deaf
 
-local MAJOR, MINOR = "LibBiSComm-1.0", 3
+local MAJOR, MINOR = "LibBiSComm-1.0", 4
 
 local lib = _G.LibBiSComm
 if lib and (lib.MINOR or 0) >= MINOR then return end   -- an equal or newer copy won
@@ -592,22 +593,24 @@ end
 -- the one slash: status and the honest off switch
 --------------------------------------------------------------------
 
-if SlashCmdList and not SlashCmdList["BISCOMM"] then
-    _G.SLASH_BISCOMM1 = "/bis"
+-- Always (re)set, even over an older copy's handler: minor 3 took "/bis", which
+-- LoonBestInSlot also owns, so the newest copy must move the slash to /biscomm.
+if SlashCmdList then
+    _G.SLASH_BISCOMM1 = "/biscomm"
     SlashCmdList["BISCOMM"] = function(msg)
         msg = tostring(msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
         local say = function(s)
             if DEFAULT_CHAT_FRAME then DEFAULT_CHAT_FRAME:AddMessage("|cffb980ffBiS|r " .. s) end
         end
         if msg == "comm off" or msg == "off" then
-            lib:SetEnabled(false); say("comm off - silent and deaf until /bis on")
+            lib:SetEnabled(false); say("comm off - silent and deaf until /biscomm on")
         elseif msg == "comm on" or msg == "on" then
             lib:SetEnabled(true); lib:Hi(); say("comm on")
         else
             say(("comm %s, lib %d, %d peer(s), running %s")
                 :format(lib:Enabled() and "on" or "off", lib.MINOR, lib:Count(),
                         lib:AddonsBlob() ~= "" and lib:AddonsBlob() or "nothing"))
-            say("/bis on | /bis off")
+            say("/biscomm on | /biscomm off")
         end
     end
 end
