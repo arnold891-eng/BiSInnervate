@@ -72,6 +72,7 @@ local function bootstrap()
         C_Timer.NewTicker(10,  function() NS.Calls:Heartbeat() end)
     end
 
+    NS.Shared.Boot()             -- the shared BiS channel, alongside our own pipe
     NS.After(2, function() if NS.InGroup() then NS.Comm:Hello() end end)
     -- an override keybind does not survive /reload: re-apply the stored one
     if NS.db.rezBindKey then NS.After(1, function() NS.Rez:ApplyBind(NS.db.rezBindKey) end) end
@@ -83,6 +84,7 @@ end
 
 reg("ADDON_LOADED", function(name) if name == ADDON then NS.InitDB() end end)
 reg("PLAYER_LOGIN", bootstrap)
+reg("PLAYER_LOGOUT", function() NS.Shared.Save() end)   -- the lib's switch is ours to keep
 
 reg("PLAYER_ENTERING_WORLD", function()
     if not NS._booted then bootstrap() end

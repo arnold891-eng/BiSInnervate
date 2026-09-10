@@ -14,9 +14,11 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibHealComm-4.0\ChatThrottleLib.lua
 Libs\LibHealComm-4.0\LibHealComm-4.0.lua
 Libs\BiSTheme\Console.lua
+Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua
 
 Core\Util.lua
 Core\Comm.lua
+Core\Shared.lua
 Core\Tracker.lua
 Core\Sound.lua
 Core\Calls.lua

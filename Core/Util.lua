@@ -4,8 +4,13 @@
 local ADDON, NS = ...
 
 NS.ADDON       = ADDON or "BiSInnervate"
-NS.VERSION     = "3.3.5"
-NS.PROTOCOL    = 4
+-- the version the raid hears (HELLO|ver, the shared channel's RegisterAddon)
+-- is the TOC's; the literal is only for a client that cannot read metadata
+-- and dev/tests.lua holds it equal to the TOC
+NS.VERSION     = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
+                 or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "3.3.5"
+NS.PROTOCOL    = 4      -- do NOT bump: other BiS addons (BiSGamba's RezComm) emit
+                        -- RCLAIM/RDONE/RFREE on this number; a bump silences every one
 NS.PREFIX      = "BiSInn"
 
 --------------------------------------------------------------------
