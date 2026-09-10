@@ -138,8 +138,20 @@ function Sound:Play(cue, call)
     if id and PlaySound then pcall(PlaySound, id, "Master") end
 end
 
+-- what the options window's "test" and the voice stepper play: a cue this
+-- client will actually hear. someoneAsked is a druid's cue and was silent on
+-- every other class; the caller's own "asked" is everyone's. Skips the
+-- once-per-0.2 s dedupe so stepping through packs plays each one.
+function Sound:Preview()
+    if NS.db and NS.db.sound == false then return false end
+    self._last = self._last or {}
+    self._last.asked = nil
+    self:Play("asked")
+    return true
+end
+
 function Sound:Test()
     NS.Print("voice pack: " .. tostring(self:ActivePack() or "none") ..
              " (" .. #self:VoicePacks() .. " installed)")
-    self:Play("someoneAsked")
+    self:Preview()
 end

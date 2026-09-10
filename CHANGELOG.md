@@ -13,7 +13,9 @@
   minimap tooltip.
 - Every option goes through the function its slash command uses (`NS.Set*`), so the two cannot
   drift; the suite clicks every control mid-fight and holds it to zero protected calls.
-- 582 checks, both ways; 59 for the kit itself.
+- The options window's test button and the voice stepper play a cue every class hears. They
+  played `someoneAsked`, which is a druid's cue - silent on everyone else, the old panel too.
+- 585 checks, both ways; 59 for the kit itself.
 
 ## 3.3.6
 

@@ -409,6 +409,19 @@ do
     C:Set("voice", 1)
     ok(db.voice == "auto", "and its first is auto")
     ok(#c.sounds > heard, "landing on a pack plays it, so you hear what you picked", #c.sounds - heard)
+    -- on a class that is not a druid too: the test cue is everyone's, not the druid's
+    local m = w.clients.Kumlust
+    m.NS.Config:Build()
+    local heardM = #m.sounds
+    m.NS.Config:Run("voiceTest")
+    ok(#m.sounds > heardM, "the test button plays on a mage (someoneAsked was a druid-only cue)", #m.sounds - heardM)
+    m.NS.Config:Run("voiceTest")
+    ok(#m.sounds > heardM + 1, "and again straight away, no dedupe on a test", #m.sounds - heardM)
+    m.NS.Config:Set("sound", false)
+    local mute = #m.sounds
+    m.NS.Config:Run("voiceTest")
+    ok(#m.sounds == mute, "but not with sounds off")
+    m.NS.Config:Set("sound", true)
     C:Set("claimHold", 1)
     ok(db.claimHold == 3, "claimHold clamps to 3", db.claimHold)
     C:Set("sound", false)
