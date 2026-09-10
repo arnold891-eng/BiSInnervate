@@ -16,7 +16,7 @@ local O = T.OPTIONS
 
 H.section("the kit loads clean")
 H.eq(#H.leaked, 0, "no accidental globals", table.concat(H.leaked, ", "))
-H.eq(T.OPTIONS_MINOR, 1, "minor 1")
+H.eq(T.OPTIONS_MINOR, 2, "minor 2")
 H.ok(type(T.Options) == "function", "T.Options is the entry point")
 
 -- a db and an option list that exercises all four kinds
@@ -188,6 +188,15 @@ local ok = pcall(function()
     f:Row({ kind = "slider", label = "nope" }, db)
 end)
 H.ok(not ok, "a fifth kind is refused outright")
+
+H.section("Escape closes it (minor 2)")
+local listed = 0
+for _, n in ipairs(UISpecialFrames) do if n == "TestOptions" then listed = listed + 1 end end
+H.eq(listed, 1, "the window is in UISpecialFrames once, by its name")
+local f2 = T.Options("TestOptions", O.W, "Options")
+listed = 0
+for _, n in ipairs(UISpecialFrames) do if n == "TestOptions" then listed = listed + 1 end end
+H.eq(listed, 1, "building it again does not list it twice")
 
 H.section("toggle and recenter")
 f:Toggle()
