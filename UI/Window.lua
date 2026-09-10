@@ -382,7 +382,7 @@ function W:SetHealerOnly(on)
         self:Bind()
         self:Say(on and "Neb mode" or "everyone", "muted")
     end
-    if NS.Config and NS.Config.frame and NS.Config.frame:IsShown() then NS.Config:Refresh() end
+    if NS.Config then NS.Config:Refresh() end
 end
 
 -- Odiss mode on or off. The size and the button row are protected, so the
@@ -400,7 +400,7 @@ function W:SetMagesOnly(on)
         self:Bind()
         self:Say(on and "mages only" or "everyone", "muted")
     end
-    if NS.Config and NS.Config.frame and NS.Config.frame:IsShown() then NS.Config:Refresh() end
+    if NS.Config then NS.Config:Refresh() end
 end
 
 -- One of the two big rows. The Mana Tide one is a secure self-cast button for

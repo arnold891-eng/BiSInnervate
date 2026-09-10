@@ -59,7 +59,8 @@ cannot be opened, closed, moved or rescaled until then either (the addon says so
 /inn config        the options window          /inn minimap     the minimap button
 /inn sound         on / off                    /inn voice       list | <pack> | off | auto | test
 /inn faces         flat or 3D portraits        /inn reset       put the window back
-/inn status        who has the addon, cooldowns, open calls
+/inn status        who has the addon, cooldowns, open calls        /inn version
+/inn callers [class]  who may ask for an innervate (mage, priest, paladin, shaman, druid, warlock, hunter)
 /inn mages         mages only (Odiss mode): just the mage faces, no buttons, the window fits them
 /inn healer        healer mode: just the rez / heal / drink button, nothing else
 /inn rez           dead: rez me first. A healer: what the button would do right now
@@ -71,8 +72,12 @@ cannot be opened, closed, moved or rescaled until then either (the addon says so
 /inn demo          see the druid's side without a druid (fake callers, harmless clicks)
 ```
 
-`cfg` in the window's corner, or right-click the minimap button, opens the options: scale,
-sound, FojjiCore voice packs, how long a call lives, which classes may call, the rez button.
+`cfg` in the window's corner, or right-click the minimap button, opens the options: one narrow
+window, the same shape as every BiS addon's - the minimap button and the BiS channel, the
+window (scale, lock, the two modes, faces, drums), the rez button, alerts and the voice pack,
+and how long a call lives. Every change says itself in the window's own `BiS>` prompt. What
+needs more than a box, a switch or a stepper is a slash command: `/inn callers`, `/inn bind`,
+`/inn rezzers`, `/inn rezheals`, `/inn rezscore`.
 
 ## Voice packs
 
@@ -90,4 +95,4 @@ Optional: `BiSTheme` for the shared palette, `FojjiCore` for voices.
 `lua5.1 dev/tests.lua` from the addon folder runs the offline suite: several independent clients
 in their own Lua environments with addon messages and combat-log events routed between them, a
 combat-lockdown model that includes protection propagation, and strict texture stubs that turn
-the classic `SetColorTexture` truncation crash into a test failure. `H.CheckLayout(page, frame)` estimates every rectangle on an options page (anchors, sizes, text width from the font size) and reports overlaps and overflow - section 51 runs it on every page, so a merged-in options page cannot ship cut off.
+the classic `SetColorTexture` truncation crash into a test failure. `H.CheckLayout(page, frame)` estimates every rectangle in a frame (anchors, sizes, text width from the font size) and reports overlaps and overflow. `dev/theme.lua` runs the suite again under a wrong-on-purpose palette; `dev/options.lua` tests the shared options kit on its own.

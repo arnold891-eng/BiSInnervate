@@ -14,6 +14,7 @@ Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibHealComm-4.0\ChatThrottleLib.lua
 Libs\LibHealComm-4.0\LibHealComm-4.0.lua
 Libs\BiSTheme\Console.lua
+Libs\BiSTheme\Options.lua
 Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua
 
 Core\Util.lua
@@ -25,7 +26,7 @@ Core\Calls.lua
 Core\Rez.lua
 UI\Window.lua
 UI\Minimap.lua
-UI\Config.lua
+UI\Options.lua
 Core\Demo.lua
 Core\Options.lua
 Core\Init.lua
