@@ -1,0 +1,16 @@
+## Interface: 20506
+## Title: BiS Rez
+## Notes: One button. Rezzes the best dead target, drinks when out of mana, heals whoever needs it.
+## Author: Kumlust
+## Version: 3.0
+## SavedVariables: BiSRezDB
+## OptionalDeps: BiSTheme
+## X-Category: Healer
+## IconTexture: Interface\Icons\Spell_Holy_Resurrection
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibHealComm-4.0\ChatThrottleLib.lua
+Libs\LibHealComm-4.0\LibHealComm-4.0.lua
+
+BiSRez.lua
