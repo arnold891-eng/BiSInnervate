@@ -67,6 +67,13 @@ function NS.T.text(name, str)
     return Fallback.text(name, str)
 end
 NS.T.hex = HEX
+-- the BiS> header prompt (Libs\BiSTheme\Console.lua, embedded; the BiSTheme
+-- addon's copy wins when it is newer). nil only if the file never loaded.
+function NS.T.Console(fs, opts)
+    local real = _G.BiSTheme
+    if real and real.Console then return real.Console(fs, opts) end
+    return nil
+end
 
 -- The two things a raider can hand out.
 --   INNERVATE: druid, single target, 6 min.

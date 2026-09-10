@@ -13,6 +13,7 @@ Libs\LibStub\LibStub.lua
 Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
 Libs\LibHealComm-4.0\ChatThrottleLib.lua
 Libs\LibHealComm-4.0\LibHealComm-4.0.lua
+Libs\BiSTheme\Console.lua
 
 Core\Util.lua
 Core\Comm.lua

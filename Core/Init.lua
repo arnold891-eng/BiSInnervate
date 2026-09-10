@@ -67,7 +67,7 @@ local function bootstrap()
 
     if C_Timer and C_Timer.NewTicker then
         C_Timer.NewTicker(0.5, function() NS.Calls:Tick(); NS.Rez:Tick(); NS.Window:Refresh() end)
-        C_Timer.NewTicker(0.1, function() NS.Window:TickTitle() end)
+        C_Timer.NewTicker(0.2, function() NS.Window:TickTitle() end)
         C_Timer.NewTicker(5,   function() NS.Tracker:BroadcastState() end)
         C_Timer.NewTicker(10,  function() NS.Calls:Heartbeat() end)
     end

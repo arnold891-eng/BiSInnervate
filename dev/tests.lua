@@ -1,7 +1,9 @@
 -- BiS Innervate 3.0 :: regression suite   (run: lua5.1 dev/tests.lua  from the addon folder)
 
 package.path = "./dev/?.lua;" .. package.path
-local H = dofile("./dev/harness.lua")
+-- dev/theme.lua runs this file a second time with a hook on the harness: use
+-- its instance when there is one
+local H = _G.BIS_HARNESS or dofile("./dev/harness.lua")
 
 local pass, fail = 0, 0
 local function ok(cond, label, extra)
@@ -1103,7 +1105,8 @@ do
     local d = decision(h)
     ok(d.action == "rez" and d.target == "Healer2", "the shaman (a rezzer) goes before the mage and the warrior", tostring(d.target))
     ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Healer2,nocombat] Resurrection", "the macro aims by NAME", rezBtn(h)._attrs["*macrotext1"])
-    ok(h.NS.Window.title:GetText() and string.find(h.NS.Window.title:GetText(), "Healer2", 1, true), "and the title bar says who is next", h.NS.Window.title:GetText())
+    local act = h.NS.Window.con and h.NS.Window.con.slots.action
+    ok(act and string.find(act.text, "Healer2", 1, true), "and the title bar says who is next", act and act.text)
     ok(rezBtn(h).glow:IsShown(), "the button pulses: there is a rez to do")
     -- every standing rezzer dry: water beats another body
     w.dead = { Kumlust = true, Tank1 = true }
@@ -1561,9 +1564,9 @@ do
     ok(f:GetWidth() == math.max(W.PAD * 2 + W.BTN_H, W.MINW_MAGES) and f:GetHeight() == W.HEADER + W.PAD + W.BTN_H + W.PAD,
        "the window is one button wide and one button tall", f:GetWidth() .. "x" .. f:GetHeight())
     ok(not W.cfgBtn:IsShown() and not W.title:IsShown(), "title and cfg leave the bar")
-    -- the bar: logo (4..15px) then H, M, x from the right - none may overlap
+    -- the bar: H, M, x from the right - H must clear the left edge
     local _, _, _, hx = W.healerBtn:GetPoint()
-    ok(not W.logo:IsShown() and f:GetWidth() + hx - 12 >= 4, "the logo leaves the narrow bar and H clears the edge", f:GetWidth() + hx - 12)
+    ok(W.logo == nil and f:GetWidth() + hx - 12 >= 4, "no logo (the prompt is the brand) and H clears the edge", f:GetWidth() + hx - 12)
     -- something to do: the rez button appears, in the first slot
     w.dead = { Kumlust = true }; w:Advance(1)
     ok(rezBtn(h):IsShown() and shownBtns() == 1, "a corpse: the rez button is the only thing on screen")
@@ -1783,23 +1786,75 @@ do
     long:Hide(); t:Hide()
 end
 
-section("52. the title cycles between who is online and what the window is doing")
+section("52. the title is the BiS> prompt: slots, events, the fade, the hit strip")
 do
     local w = rezRaid()
     local m = w.clients.Kumlust
     local W = m.NS.Window
+    local con = W.con
     -- druids are off the grid: mages and healers only
     local classes = {}
     for _, f in ipairs(W.faces or {}) do if f.class then classes[f.class] = true end end
-    ok(not classes.DRUID, "no druid face on the grid", table.concat((function() local t = {} for k in pairs(classes) do t[#t+1] = k end return t end)(), ","))
+    ok(not classes.DRUID, "no druid face on the grid")
     local list = W:OnlineList()
     local withAddon = 0
     for _, e in ipairs(list) do if m.NS.Comm:HasAddon(e.name) then withAddon = withAddon + 1 end end
     ok(#list > 1 and withAddon == #list, "the online list is everyone with the addon, me included", #list, withAddon)
     ok(list[1].name == "Kumlust", "and I am first", list[1].name)
-    ok(W.onlineBtn and W.onlineBtn:IsShown(), "the hover strip over the title is there")
-    -- a plain click on it does nothing (so a drag there moves the window);
-    -- shift-click prints who is online
+    -- the console is the real embedded one, loaded the TOC way (not a fallback)
+    ok(con ~= nil and m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR == 2, "the header carries the BiS> console, Console.lua minor 2", m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR)
+    ok(W.title:GetText() == m.NS.T.text("accent", "BiS> "), "the title itself is the prompt", W.title:GetText())
+    -- the accent is read from the theme per call, never captured: under
+    -- dev/theme.lua the wrong-on-purpose accent must show through everywhere
+    local want = H.THEME_PASS or "b980ff"
+    ok(m.NS.T.text("accent", "x") == "|cff" .. want .. "x|r", "NS.T reads the live palette (" .. want .. ")", m.NS.T.text("accent", "x"))
+    ok(W.title:GetText():find(want, 1, true) ~= nil, "and the prompt wears it", W.title:GetText())
+    local r = m.NS.T.rgb("accent")
+    ok(math.abs(r - tonumber(want:sub(1, 2), 16) / 255) < 0.001, "rgb too", r)
+    ok(W.logo == nil, "no logo: the prompt is the brand")
+    local function shown() return (tostring(con:Text()):gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", "")) end
+    local function tick(n) for _ = 1, n do w.time = w.time + 0.05; W:TickTitle() end end
+    ok(con.slots.name and con.slots.name.text == "Innervate" and con.slots.name.colour == "accent", "slot one is the name, in the accent")
+    tick(1)
+    ok(con.slots.online and con.slots.online.text == (#list .. " online") and con.slots.online.colour == "good", "the online count is a green slot", con.slots.online and con.slots.online.text)
+    -- the slots rotate: name, then the count, with a fade between (>=3 mid frames)
+    tick(6)
+    ok(shown():find("Innervate", 1, true), "the name shows first", shown())
+    local mid = 0
+    for _ = 1, 80 do
+        w.time = w.time + 0.05; W:TickTitle()
+        local a = con.words:GetAlpha()
+        if a > 0 and a < 1 then mid = mid + 1 end
+    end
+    ok(mid >= 3, "the words fade between slots, not a hard cut", mid)
+    ok(shown():find("online", 1, true), "and the count is up after the cycle", shown())
+    -- the action slot: what the window is doing, plain words coloured by meaning
+    W._actionShown = nil
+    m.NS.Rez.last = { action = "heal", target = "Dps10", targetClass = "MAGE" }
+    local oldActive = m.NS.Rez.Active
+    m.NS.Rez.Active = function() return true end
+    W:PaintTitle()
+    ok(con.slots.action and con.slots.action.text == "heal Dps10" and con.slots.action.colour == "gold", "a heal is a gold action slot", con.slots.action and con.slots.action.text)
+    ok(not con.slots.action.text:find("|c", 1, true), "plain words: the trim never cuts a colour escape")
+    m.NS.Rez.Active = oldActive; m.NS.Rez.last = nil; W:PaintTitle()
+    ok(con.slots.action == nil, "nothing to do clears the action slot")
+    -- an event jumps in over the slots, holds, then the rotation resumes
+    W:Say("drums: War", "gold")
+    tick(8)
+    ok(shown():find("drums: War", 1, true), "a Say jumps into the prompt", shown())
+    w.time = w.time + 4; tick(8)
+    ok(not shown():find("drums", 1, true), "and leaves after the hold", shown())
+    -- the header budget: the prompt never runs under H
+    W:Say("Averyveryverylongname needs a very long heal", "ink2")
+    tick(8)
+    ok(con:Width() <= con.width, "a long line is trimmed to the budget", con:Width(), con.width)
+    ok(shown():find("%.%.%."), "with an ellipsis", shown())
+    -- the budget arithmetic: prompt start + budget + air <= H's left edge
+    local _, _, _, hx = W.healerBtn:GetPoint()
+    ok(4 + W.TITLE_W + 3 <= W.width + hx - 12, "the budget clears H", 4 + W.TITLE_W + 3, W.width + hx - 12)
+    w.time = w.time + 4; tick(8)
+    -- the hit strip keeps the title's interactions: hover list, shift-click, drag
+    ok(W.onlineBtn and W.onlineBtn:IsShown(), "the hover strip over the prompt is there")
     local printed = {}
     local oldPrint = m.NS.Print
     m.NS.Print = function(msg) printed[#printed + 1] = msg end
@@ -1809,41 +1864,26 @@ do
     ok(#printed == 1 and string.find(printed[1] or "", "with the addon", 1, true) ~= nil, "shift-click prints the list", printed[1])
     w.shift = false; m.NS.Print = oldPrint
     ok(W.onlineBtn:GetScript("OnDragStart") ~= nil, "and it hands a drag to the window")
-    -- the two messages
-    local msgs = W:TitleMessages()
-    ok(string.find(msgs[1], #list .. " online", 1, true) ~= nil, "slot one counts the addon users", msgs[1])
-    ok(string.find(msgs[2], "Innervate", 1, true) ~= nil, "slot two is the name when nothing is happening", msgs[2])
-    -- from a fresh start: the name holds, fades out, the count fades in
-    W._title = nil
-    local t0 = w.time
-    W:TickTitle(t0)
-    ok(W.title:GetAlpha() == 1 and W.title:GetText() == msgs[2], "starts on the action text at full alpha", W.title:GetText())
-    W:TickTitle(t0 + 1)
-    ok(W.title:GetAlpha() == 1, "still solid inside the hold", W.title:GetAlpha())
-    W:TickTitle(t0 + W.TITLE_HOLD)                      -- hold over -> fade out begins
-    W:TickTitle(t0 + W.TITLE_HOLD + W.TITLE_FADE / 2)
-    local mid = W.title:GetAlpha()
-    ok(mid > 0 and mid < 1, "half way through the fade out", mid)
-    W:TickTitle(t0 + W.TITLE_HOLD + W.TITLE_FADE + 0.01) -- gone: swap to the count
-    ok(W.title:GetText() == msgs[1], "swaps to the online count once dark", W.title:GetText())
-    local t1 = t0 + W.TITLE_HOLD + W.TITLE_FADE + 0.01
-    W:TickTitle(t1 + W.TITLE_FADE / 2)
-    mid = W.title:GetAlpha()
-    ok(mid > 0 and mid < 1, "fading the count in", mid)
-    W:TickTitle(t1 + W.TITLE_FADE + 0.01)
-    ok(W.title:GetAlpha() == 1, "and holds it solid", W.title:GetAlpha())
-    -- the action changes while the name slot is up: shown at once, no fade
-    W._title = nil
-    W:TickTitle(t1 + 10)
-    W._actionText = "heal Dps10"
-    W:TickTitle(t1 + 10.1)
-    ok(W.title:GetText() == "heal Dps10" and W.title:GetAlpha() == 1, "a new action replaces the name straight away", W.title:GetText())
-    W._actionText = nil
+    local tipLines = {}
+    m.env.GameTooltip.AddLine = function(_, line) tipLines[#tipLines + 1] = line end
+    W.onlineBtn:GetScript("OnEnter")(W.onlineBtn)
+    local named = 0
+    for _, l in ipairs(tipLines) do for _, e in ipairs(list) do if tostring(l):find(e.name, 1, true) then named = named + 1 end end end
+    ok(named == #list, "the tooltip lists everyone online", named, #list)
     -- ticking in a fight touches text and alpha only: no secure write
     w:SetCombat(true)
-    local okc = pcall(function() W:TickTitle(t1 + 20) end)
+    local okc = pcall(function() tick(4) end)
     ok(okc, "ticking in combat is safe")
     w:SetCombat(false)
+    -- compact modes take the prompt off the bar and Say falls back to chat
+    W:SetHealerOnly(true)
+    ok(not W.title:IsShown() and not con.words:IsShown(), "Neb mode hides the prompt and its words")
+    printed = {}; m.NS.Print = function(msg) printed[#printed + 1] = msg end
+    W:Say("hello", "muted")
+    ok(printed[1] == "hello", "a Say with no prompt on screen goes to chat", printed[1])
+    m.NS.Print = oldPrint
+    W:SetHealerOnly(false)
+    ok(W.title:IsShown() and con.words:IsShown(), "back in the full window the prompt returns")
 end
 
 section("53. spec on the grid, and the mode a class starts in")
@@ -1907,7 +1947,8 @@ end
 section("17. hygiene")
 do
     local w = raid(BASE)
-    local allow = { BiSInnervateDB = true, SLASH_BISINNERVATE1 = true, SLASH_BISINNERVATE2 = true, SLASH_BISINNERVATE3 = true }
+    local allow = { BiSInnervateDB = true, SLASH_BISINNERVATE1 = true, SLASH_BISINNERVATE2 = true, SLASH_BISINNERVATE3 = true,
+                    BiSTheme = true }      -- the embedded Console.lua installs the theme handle on purpose
     local leaks = {}
     local c = w.clients.Healer3
     for k in pairs(c.env) do
