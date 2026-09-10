@@ -130,7 +130,7 @@ function Config:OptionSections()
             { key = "voice", kind = "step", label = "voice pack", min = 1, max = #voices, step = 1,
               get = function() return Config:VoiceIndex(voices) end,
               set = function(_, v) NS.SetVoice(voices[v] or "auto"); NS.Sound:Preview() end,
-              show = function() return string.sub(voices[Config:VoiceIndex(voices)] or "auto", 1, 9) end },
+              show = function() return NS.Sound:ShortPack(voices[Config:VoiceIndex(voices)] or "auto") end },
             { key = "voiceTest", kind = "button", label = "hear the alert", button = "test",
               action = function() NS.Sound:Preview() end },   -- Test() prints too; the prompt says it here
         } },
