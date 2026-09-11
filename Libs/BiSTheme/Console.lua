@@ -38,8 +38,8 @@
 
 BiSTheme = BiSTheme or {}
 local T = BiSTheme
-if (T.CONSOLE_MINOR or 0) >= 2 then return end
-T.CONSOLE_MINOR = 2
+if (T.CONSOLE_MINOR or 0) >= 3 then return end
+T.CONSOLE_MINOR = 3      -- 3: a toggled slot no longer re-appends itself to the rotation (11 Sep 2026)
 
 -- palette fallback: only when this file is embedded and BiSTheme.lua never ran
 if not T.rgb then
@@ -126,7 +126,13 @@ function Con:Set(key, text, colour)
   if text == nil or text == "" then
     self.slots[key] = nil
   else
-    if not self.slots[key] then self.order[#self.order + 1] = key end
+    -- minor 3: a key keeps its place in the rotation for good. Clearing a slot and
+    -- setting it again used to append the key a second time (the slot was nil, so it
+    -- looked new), and a slot that toggles - Nebbinator's `N new`, Tools' `asking` -
+    -- ended up in `order` five or six times and hogged the rotation.
+    local known = false
+    for _, k in ipairs(self.order) do if k == key then known = true break end end
+    if not known then self.order[#self.order + 1] = key end
     self.slots[key] = { text = tostring(text), colour = colour or "ink" }
   end
   self:Paint()
