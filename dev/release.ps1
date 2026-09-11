@@ -41,6 +41,24 @@ foreach ($l in $lines) {
 }
 $changelog = ($entry -join "`n").Trim()
 
+# embedded libs must be byte-identical to their canonical copies, or a release
+# ships an old lib (10 Sep 2026: minor 4 still in three addons while minor 5
+# fixed the phantom summon). ..\_bisdev\sync.ps1 copies them; -Check just looks.
+$canon = @{
+    "Libs\LibBiSComm-1.0\LibBiSComm-1.0.lua" = "..\_bisdev\LibBiSComm-1.0\LibBiSComm-1.0.lua"
+    "Libs\BiSTheme\Console.lua"              = "..\BiSTheme\Console.lua"
+    "Libs\BiSTheme\Options.lua"              = "..\BiSTheme\Options.lua"
+}
+foreach ($k in $canon.Keys) {
+    $mine = Join-Path $Root $k
+    $ref  = Join-Path $Root $canon[$k]
+    if ((Test-Path $mine) -and (Test-Path $ref)) {
+        $a = (Get-FileHash $mine -Algorithm MD5).Hash
+        $b = (Get-FileHash $ref  -Algorithm MD5).Hash
+        if ($a -ne $b) { throw "embedded $k differs from its canonical copy - run ..\_bisdev\sync.ps1 first" }
+    }
+}
+
 # the zip: everything but dev/, .pkgmeta and the dot-files
 $zip = Join-Path $Downloads "$AddonName-$version.zip"
 $stage = Join-Path $env:TEMP "$AddonName-release"
@@ -68,26 +86,48 @@ $gv = $versions | Where-Object { $_.gameVersionTypeID -eq $tbcType.id } | Sort-O
 if (-not $gv) { throw "no game version under type $($tbcType.name)" }
 Write-Host "game version: $($gv.name) (id $($gv.id), type $($tbcType.name))"
 
-$metadata = @{
-    changelog     = $changelog
-    changelogType = "markdown"
-    displayName   = "$AddonName $version"
-    gameVersions  = @($gv.id)
-    releaseType   = $Type
-} | ConvertTo-Json -Compress
-
 # multipart by hand: Invoke-RestMethod -Form needs PS 6+, this runs on 5.1 too
-$boundary = [System.Guid]::NewGuid().ToString()
-$bytes = [System.IO.File]::ReadAllBytes($zip)
-$enc = [System.Text.Encoding]::UTF8
-$head = "--$boundary`r`nContent-Disposition: form-data; name=`"metadata`"`r`nContent-Type: application/json`r`n`r`n$metadata`r`n" +
-        "--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"$(Split-Path $zip -Leaf)`"`r`nContent-Type: application/zip`r`n`r`n"
-$tail = "`r`n--$boundary--`r`n"
-$body = New-Object System.IO.MemoryStream
-$b = $enc.GetBytes($head); $body.Write($b, 0, $b.Length)
-$body.Write($bytes, 0, $bytes.Length)
-$b = $enc.GetBytes($tail); $body.Write($b, 0, $b.Length)
+function Send-Upload($log, $logType) {
+    $metadata = @{
+        changelog     = $log
+        changelogType = $logType
+        displayName   = "$AddonName $version"
+        gameVersions  = @($gv.id)
+        releaseType   = $Type
+    } | ConvertTo-Json -Compress
+    $boundary = [System.Guid]::NewGuid().ToString()
+    $bytes = [System.IO.File]::ReadAllBytes($zip)
+    $enc = [System.Text.Encoding]::UTF8
+    $head = "--$boundary`r`nContent-Disposition: form-data; name=`"metadata`"`r`nContent-Type: application/json`r`n`r`n$metadata`r`n" +
+            "--$boundary`r`nContent-Disposition: form-data; name=`"file`"; filename=`"$(Split-Path $zip -Leaf)`"`r`nContent-Type: application/zip`r`n`r`n"
+    $tail = "`r`n--$boundary--`r`n"
+    $body = New-Object System.IO.MemoryStream
+    $b = $enc.GetBytes($head); $body.Write($b, 0, $b.Length)
+    $body.Write($bytes, 0, $bytes.Length)
+    $b = $enc.GetBytes($tail); $body.Write($b, 0, $b.Length)
+    return Invoke-RestMethod -Method Post -Headers $headers -ContentType "multipart/form-data; boundary=$boundary" `
+        -Uri "https://wow.curseforge.com/api/projects/$ProjectId/upload-file" -Body $body.ToArray()
+}
 
-$resp = Invoke-RestMethod -Method Post -Headers $headers -ContentType "multipart/form-data; boundary=$boundary" `
-    -Uri "https://wow.curseforge.com/api/projects/$ProjectId/upload-file" -Body $body.ToArray()
+# CurseForge answers 500 now and then for no reason it will name. Three tries
+# with the markdown changelog, then once more with it as plain text - if that
+# one lands, the markdown was what it choked on and the log will say so.
+$resp = $null
+$attempts = @(
+    @{ log = $changelog; type = "markdown" },
+    @{ log = $changelog; type = "markdown" },
+    @{ log = $changelog; type = "markdown" },
+    @{ log = ($changelog -replace '[`*_]', ''); type = "text" }
+)
+for ($i = 0; $i -lt $attempts.Count -and -not $resp; $i++) {
+    try {
+        $resp = Send-Upload $attempts[$i].log $attempts[$i].type
+    } catch {
+        $msg = $_.Exception.Message
+        try { $sr = New-Object IO.StreamReader($_.Exception.Response.GetResponseStream()); $msg = $sr.ReadToEnd() } catch {}
+        Write-Host ("attempt {0} ({1}) failed: {2}" -f ($i + 1), $attempts[$i].type, $msg)
+        if ($i -lt $attempts.Count - 1) { Start-Sleep -Seconds 5 }
+    }
+}
+if (-not $resp) { throw "upload failed after $($attempts.Count) attempts - the zip is still in Downloads, upload it by hand on the project page" }
 Write-Host "uploaded: file id $($resp.id) - $AddonName $version ($Type)"

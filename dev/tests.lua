@@ -2059,7 +2059,7 @@ do
     local w = rezRaid()
     local m = w.clients.Kumlust
     local lib = m.env.LibBiSComm
-    ok(lib ~= nil and lib.MINOR == 4, "LibBiSComm is embedded, minor 4", lib and lib.MINOR)
+    ok(lib ~= nil and lib.MINOR == 5, "LibBiSComm is embedded, minor 5", lib and lib.MINOR)
     ok(lib._booted == true, "it boots from PLAYER_LOGIN")
     local tocVer = m.env.GetAddOnMetadata("BiSInnervate", "Version")
     ok(lib.addons and lib.addons.BiSInnervate == tocVer, "the addon is registered with the TOC's version, not a literal", lib.addons and lib.addons.BiSInnervate, tocVer)
@@ -2147,6 +2147,21 @@ do
         end
     end
     ok(#stale == 0, "no source file carries a version literal other than the TOC's", table.concat(stale, ","))
+    -- embedded libs are the canonical bytes. The lib is edited in _bisdev (the
+    -- theme in BiSTheme) and copied out; a stale copy in an addon is how three
+    -- addons were still announcing phantom OFFERs after minor 5 fixed it. When
+    -- the sibling folders are there (they are, in the AddOns tree), every
+    -- embedded file must be byte-identical - run _bisdev/sync.ps1 otherwise.
+    local function bytes(path) local fh = io.open(path, "rb") if not fh then return nil end local b = fh:read("*a") fh:close() return b end
+    for _, pr in ipairs({
+        { "Libs/LibBiSComm-1.0/LibBiSComm-1.0.lua", "../_bisdev/LibBiSComm-1.0/LibBiSComm-1.0.lua" },
+        { "Libs/BiSTheme/Console.lua",              "../BiSTheme/Console.lua" },
+        { "Libs/BiSTheme/Options.lua",              "../BiSTheme/Options.lua" },
+    }) do
+        local mine, ref = bytes(pr[1]), bytes(pr[2])
+        if ref then ok(mine == ref, "embedded " .. pr[1] .. " is byte-identical to " .. pr[2] .. " (run _bisdev/sync.ps1)")
+        else print("   (canonical " .. pr[2] .. " not beside this checkout - embed check skipped)") end
+    end
 end
 
 --------------------------------------------------------------------
