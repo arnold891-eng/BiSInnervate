@@ -1,5 +1,13 @@
 # BiS Innervate
 
+## 3.3.9
+
+- Shared console minor 3: a header slot that toggles (`online`, `incoming`) no longer takes
+  a second turn in the rotation every time it comes back.
+- Offline proof that a Gamba-only or Tools-only rezzer's RezComm claim lands on this grid:
+  claim same tick, his own FREE releases, a stranger's FREE is refused, wrong protocol is
+  silence - and RezComm's PROTO is read off its file and held equal to NS.PROTOCOL.
+
 ## 3.3.8
 
 - lib minor 5: phantom summon on bystanders fixed.

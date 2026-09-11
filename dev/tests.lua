@@ -2164,6 +2164,57 @@ do
     end
 end
 
+section("57. a Gamba-only rezzer's RezComm claim lands on an Innervate grid (debt 8)")
+-- The emitter (_bisdev/RezComm-1.0, embedded in Gamba and Tools) never loads Innervate; it
+-- speaks Innervate's BiSInn wire from a client that has no lib and no HELLO. The three
+-- deciding assertions from bisgamba-rezcomm-status.md: claim lands in the same tick, the
+-- rezzer's own FREE releases it, a stranger's FREE for that claim is refused. The wire
+-- lines are built the way RezComm builds them (PROTO|CMD|name), with PROTO read off the
+-- emitter file itself so a protocol bump on either side goes red here, not on raid night.
+do
+    local w = H.NewWorld(".")
+    for _, p in ipairs(BASE) do w:AddPlayer(p[1], p[2], p[3] ~= false, p[5], p[6]); if p[4] then w.mana[p[1]] = p[4] end end
+    w:AddPlayer("Dps13", "PALADIN", false, 2)      -- Gamba only: no Innervate, no HELLO
+    w:AddPlayer("Stranger", "PRIEST", false, 2)      -- another lib-less raider
+    w:Login(); w:Advance(4)
+    local h = w.clients.Healer1
+    -- the emitter's protocol, read off disk (canon beside this checkout; skip with a note if not)
+    local proto = nil
+    local fh = io.open("../_bisdev/RezComm-1.0/RezComm-1.0.lua", "rb")
+    if fh then
+        local src = fh:read("*a") fh:close()
+        proto = tonumber(src:match("local%s+PROTO%s*=%s*(%d+)"))
+        ok(proto == h.NS.PROTOCOL, "RezComm's PROTO equals Innervate's NS.PROTOCOL (bump one, bump both)", tostring(proto) .. " vs " .. tostring(h.NS.PROTOCOL))
+    else
+        print("   (canonical ../_bisdev/RezComm-1.0 not beside this checkout - PROTO cross-check skipped)")
+        proto = h.NS.PROTOCOL
+    end
+    local function wire(cmd, name) return proto .. "|" .. cmd .. "|" .. name end
+    w.dead = { Kumlust = true }
+    w:Advance(1)
+    ok(h.NS.Rez.claims.Kumlust == nil, "nobody has claimed the corpse yet")
+    -- 1. claim lands in the same tick: no Advance between Deliver and the check
+    w:Deliver("Dps13", "Healer1", wire("RCLAIM", "Kumlust"))
+    local c = h.NS.Rez.claims.Kumlust
+    ok(c ~= nil and c.who == "Dps13" and c.src == "comm", "the Gamba-only rezzer's RCLAIM is a claim on the Innervate grid, same tick", c and c.who)
+    -- 2. the rezzer's own FREE releases it
+    w:Deliver("Dps13", "Healer1", wire("RFREE", "Kumlust"))
+    ok(h.NS.Rez.claims.Kumlust == nil, "his RFREE (interrupt) releases the corpse")
+    -- 3. a stranger's FREE for someone else's claim is refused
+    w:Deliver("Dps13", "Healer1", wire("RCLAIM", "Kumlust"))
+    w:Deliver("Stranger", "Healer1", wire("RFREE", "Kumlust"))
+    c = h.NS.Rez.claims.Kumlust
+    ok(c ~= nil and c.who == "Dps13", "a stranger's RFREE for Dps13's claim is refused - the claim stands", c and c.who)
+    -- and RDONE marks it rezzed
+    w:Deliver("Dps13", "Healer1", wire("RDONE", "Kumlust"))
+    ok(h.NS.Rez.claims.Kumlust ~= nil and h.NS.Rez.claims.Kumlust.who == "Dps13", "his RDONE keeps the guard claim in his name")
+    -- the wrong protocol is silence, not a claim (the landmine the status doc warns about)
+    h.NS.Rez:ClearClaim("Kumlust")
+    w:Deliver("Dps13", "Healer1", (proto + 1) .. "|RCLAIM|Kumlust")
+    ok(h.NS.Rez.claims.Kumlust == nil, "a claim on the wrong protocol number is ignored")
+    w.dead = {}
+end
+
 --------------------------------------------------------------------
 print(string.format("\n%d passed, %d failed\n", pass, fail))
 os.exit(fail == 0 and 0 or 1)
