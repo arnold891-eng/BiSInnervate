@@ -4,6 +4,11 @@
 #   .\release.ps1                 -> zip + upload as alpha (nobody is pushed it)
 #   .\release.ps1 -Type beta      -> beta; -Type release -> everyone. Or flip it on the dashboard.
 #   .\release.ps1 -ZipOnly        -> just the zip, no upload
+#   .\release.ps1 -Force          -> upload again even though this version already went up
+#
+# A version goes up ONCE: after a successful upload a marker sits beside the zip
+# (Downloads\<Addon>-<version>.uploaded, holding the file id). Pasting the block
+# twice is then a no-op that tells you the file id, not a duplicate on CurseForge.
 #
 # Needs, once:
 #   * the API token in %USERPROFILE%\Downloads\curseforge-token.txt
@@ -16,7 +21,8 @@
 
 param(
     [ValidateSet("release", "beta", "alpha")] [string] $Type = "alpha",
-    [switch] $ZipOnly
+    [switch] $ZipOnly,
+    [switch] $Force
 )
 
 $ErrorActionPreference = "Stop"
@@ -71,6 +77,12 @@ if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $stage $AddonName) -DestinationPath $zip
 Write-Host "zip: $zip"
 if ($ZipOnly) { exit 0 }
+
+$marker = Join-Path $Downloads "$AddonName-$version.uploaded"
+if ((Test-Path $marker) -and -not $Force) {
+    Write-Host "already uploaded: $AddonName $version went up as file id $((Get-Content $marker -Raw).Trim()) - bump the version (or -Force to send it again)"
+    exit 0
+}
 
 if ($ProjectId -eq 0) { throw "set `$ProjectId at the top of this script first" }
 if (-not (Test-Path $TokenFile)) { throw "no token file at $TokenFile" }
@@ -130,4 +142,5 @@ for ($i = 0; $i -lt $attempts.Count -and -not $resp; $i++) {
     }
 }
 if (-not $resp) { throw "upload failed after $($attempts.Count) attempts - the zip is still in Downloads, upload it by hand on the project page" }
+Set-Content -Path $marker -Value $resp.id
 Write-Host "uploaded: file id $($resp.id) - $AddonName $version ($Type)"
