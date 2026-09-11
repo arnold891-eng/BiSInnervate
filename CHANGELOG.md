@@ -1,5 +1,10 @@
 # BiS Innervate
 
+## 3.3.10
+
+- Shared console minor 4: the blinking cursor in the `BiS>` header is its own text now, so
+  the words beside it no longer shift a hair every half second.
+
 ## 3.3.9
 
 - Shared console minor 3: a header slot that toggles (`online`, `incoming`) no longer takes
