@@ -1,5 +1,11 @@
 # BiS Innervate
 
+## 3.3.8
+
+- lib minor 5: phantom summon on bystanders fixed.
+- The suite and `release.ps1` hold every embedded lib byte-identical to its canonical copy
+  (`_bisdev`, `BiSTheme`), so a stale lib can no longer ship. 598 checks.
+
 ## 3.3.7
 
 - **The options window is the house one** (`Libs\BiSTheme\Options.lua`): one narrow flat window,
