@@ -24,7 +24,7 @@
 --   * every host callback is pcall'd -- a lib fault cannot kill the addon
 --   * off means silent AND deaf
 
-local MAJOR, MINOR = "LibBiSComm-1.0", 4
+local MAJOR, MINOR = "LibBiSComm-1.0", 5
 
 local lib = _G.LibBiSComm
 if lib and (lib.MINOR or 0) >= MINOR then return end   -- an equal or newer copy won
@@ -466,6 +466,11 @@ function lib:OnConfirmSummon()
     local summoner = GetSummonConfirmSummoner and GetSummonConfirmSummoner() or ""
     local area     = GetSummonConfirmAreaName and GetSummonConfirmAreaName() or ""
     local left     = GetSummonConfirmTimeLeft and GetSummonConfirmTimeLeft() or OFFER_FALLBACK
+    -- MINOR 5: the 2.5.x client fires CONFIRM_SUMMON on bystanders too (Arn, 10 Sep:
+    -- "randomly if any other person gets a summon it says SUMMON by someone") - with
+    -- no summoner, no area, no clock. That is not an offer to ME; announcing it as
+    -- one would put a phantom OFFER on every summoner's list. Ask the client.
+    if not self:HasPendingSummon(summoner, area, left) then return end
     left = tonumber(left) or OFFER_FALLBACK
     if left <= 0 then left = OFFER_FALLBACK end
     self._offerId = (self._offerId or 0) + 1
@@ -478,6 +483,16 @@ function lib:OnConfirmSummon()
             lib:SendSummon("NO", nil, nil, nil)
         end
     end)
+end
+
+-- Is there really a summon waiting on THIS client? The C API answers when it
+-- exists; when it does not (old client), the event itself is all we have.
+function lib:HasPendingSummon(summoner, area, left)
+    if not GetSummonConfirmSummoner then return true end
+    summoner = summoner or (GetSummonConfirmSummoner() or "")
+    area = area or (GetSummonConfirmAreaName and GetSummonConfirmAreaName() or "")
+    left = tonumber(left or (GetSummonConfirmTimeLeft and GetSummonConfirmTimeLeft())) or 0
+    return (summoner ~= "" or area ~= "" or left > 0) and true or false
 end
 
 function lib:OnConfirmed()      -- they clicked Accept
