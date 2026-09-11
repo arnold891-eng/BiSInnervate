@@ -1912,7 +1912,7 @@ do
     ok(#list > 1 and withAddon == #list, "the online list is everyone with the addon, me included", #list, withAddon)
     ok(list[1].name == "Kumlust", "and I am first", list[1].name)
     -- the console is the real embedded one, loaded the TOC way (not a fallback)
-    ok(con ~= nil and m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR == 3, "the header carries the BiS> console, Console.lua minor 3 (order quirk fixed)", m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR)
+    ok(con ~= nil and m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR == 4, "the header carries the BiS> console, Console.lua minor 4 (cursor is its own FontString)", m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR)
     ok(W.title:GetText() == m.NS.T.text("accent", "BiS> "), "the title itself is the prompt", W.title:GetText())
     -- the accent is read from the theme per call, never captured: under
     -- dev/theme.lua the wrong-on-purpose accent must show through everywhere
