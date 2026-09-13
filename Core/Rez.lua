@@ -1233,10 +1233,34 @@ end
 -- events (Init routes these here)
 --------------------------------------------------------------------
 
+-- UNIT_SPELLCAST_SENT carries the target: a rez cast from a raid frame, a macro, or the
+-- spellbook - not our button - still gets a pending name, so the claim goes out for it too.
+-- (Raid night 12 Sep: Lumi rezzed Dumbleedore from her frames, no claim was sent, Arn's
+-- button never moved.) A click through our button already set pending; leave that.
+function Rez:OnCastSent(unit, target, spell)
+    if unit ~= "player" or not self:IsRezSpell(spell) then return end
+    if not target or target == "" then return end
+    if self.pending and (NS.Now() - (self.pending.at or 0)) < 3 then return end
+    self.pending = { name = NS.Short(target), at = NS.Now(), sent = true }
+end
+
 function Rez:OnCastStart(unit, spell)
     if unit ~= "player" or not self.pending then return end
     if not self:IsRezSpell(spell) then return end
     local name = self.pending.name
+    -- somebody else's claim landed between our click and our cast bar (the half-second the
+    -- button had not moved yet): stop this one, the button is already on the next corpse.
+    -- SpellStopCasting is not protected. (Raid night 12 Sep: Arn and Lumi both on Dumbleedore.)
+    local other = self:ClaimedBy(name)
+    if other then
+        if SpellStopCasting then SpellStopCasting() end
+        self.pending = nil
+        self.report = nil
+        NS.Print(T.text("warn", NS.ClassColored(other) .. " is already rezzing " .. NS.ClassColored(name) .. " - stopped yours, moving on"))
+        self:Tick()
+        if NS.Window then NS.Window:Refresh() end
+        return
+    end
     self:Claim(name, me(), self.CLAIM_LIFE, "comm")
     NS.Comm:Send("RCLAIM", name)
     if NS.Window then NS.Window:Refresh() end

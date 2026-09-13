@@ -256,6 +256,8 @@ end
 -- `seconds`, and their own client sees UNIT_SPELLCAST_START
 function World:StartCast(caster, spell, target, seconds)
     self.casting[caster] = { spell = spell, target = target, endAt = self.time + (seconds or 10) }
+    -- the client's order: SENT (with the target) then START
+    self:Fire(caster, "UNIT_SPELLCAST_SENT", "player", target, "cast-s", REZ_NAME_ID[spell] or spell)
     self:Fire(caster, "UNIT_SPELLCAST_START", "player", "cast-s", REZ_NAME_ID[spell] or spell)
 end
 
@@ -394,6 +396,11 @@ function World:NewClient(name, class, hasAddon)
         return (world.incoming[n] or 0) + (world.myIncoming[n] or 0)
     end
     -- UnitCastingInfo's 5th return is when the cast lands, in ms
+    env.SpellStopCasting = function()
+        world.stopped = world.stopped or {}
+        world.stopped[name] = (world.stopped[name] or 0) + 1
+        world.casting[name] = nil
+    end
     env.UnitCastingInfo = function(u)
         local n = resolve(u)
         local c = n and world.casting[n]
@@ -968,7 +975,7 @@ function World:NewClient(name, class, hasAddon)
                 UNIT_SPELLCAST_SUCCEEDED=1, SPELL_UPDATE_COOLDOWN=1,
                 PLAYER_REGEN_ENABLED=1, PLAYER_REGEN_DISABLED=1,
                 PLAYER_TALENT_UPDATE=1, CVAR_UPDATE=1, BAG_UPDATE=1, UNIT_AURA=1,
-                UNIT_SPELLCAST_START=1, UNIT_SPELLCAST_STOP=1, UNIT_SPELLCAST_INTERRUPTED=1,
+                UNIT_SPELLCAST_START=1, UNIT_SPELLCAST_STOP=1, UNIT_SPELLCAST_INTERRUPTED=1, UNIT_SPELLCAST_SENT=1,
                 UNIT_SPELLCAST_FAILED=1, UI_ERROR_MESSAGE=1, SPELLS_CHANGED=1,
                 PLAYER_EQUIPMENT_CHANGED=1, PLAYER_DEAD=1, PLAYER_UNGHOST=1, PLAYER_ALIVE=1,
                 UPDATE_SHAPESHIFT_FORM=1, PLAYER_LOGOUT=1,

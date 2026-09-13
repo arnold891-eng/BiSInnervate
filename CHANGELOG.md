@@ -1,5 +1,15 @@
 # BiS Innervate
 
+## 3.3.11
+
+- Raid night 12 Sep (Arn + Lumi, both on Dumbleedore): two holes in the claim, both closed.
+  A rez cast from the raid frames, a macro or the spellbook - not our button - sent no claim,
+  so nobody's button moved; `UNIT_SPELLCAST_SENT` carries the target, so every own rez cast
+  claims now. And a click that lands in the half second before the other claim arrives used
+  to start anyway: at cast start, a corpse already claimed by somebody else stops your cast
+  (`SpellStopCasting`, not protected), says "X is already rezzing Y - stopped yours, moving
+  on", and the button is on the next corpse. No claim goes out for the stopped cast.
+
 ## 3.3.10
 
 - Shared console minor 4: the blinking cursor in the `BiS>` header is its own text now, so
