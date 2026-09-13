@@ -1296,6 +1296,55 @@ do
     w.dead = {}
 end
 
+section("39b. raid night 12 Sep: a rez from the raid frames still claims; a collision stops the later cast")
+do
+    local w = rezRaid()
+    local h, sh = w.clients.Healbot, w.clients.Shammy
+    w.dead = { Kumlust = true, Tankman = true }
+    w:Advance(1)
+    ok(decision(h).target == "Kumlust" and decision(sh).target == "Kumlust", "both rezzers aim at the mage")
+    -- the priest rezzes the mage from her raid frames: no click on our button, no pending
+    w.addonMsgs = {}
+    w:StartCast("Healbot", "Resurrection", "Kumlust", 10)
+    w:Advance(0.6)
+    local claimed = false
+    for _, m in ipairs(w.addonMsgs) do if string.find(m.msg, "|RCLAIM|Kumlust", 1, true) then claimed = true end end
+    ok(claimed, "a rez cast that did not come through our button still sends the claim (UNIT_SPELLCAST_SENT carries the target)")
+    ok(sh.NS.Rez:ClaimedBy("Kumlust") == "Healbot", "the shaman's client has it")
+    ok(decision(sh).target == "Tankman", "and the shaman's button moved on", tostring(decision(sh).target))
+    w:StopCast("Healbot"); w:CastRez("Healbot", "Kumlust")
+    w.dead = { Tankman = true, Enhance = true }
+    w:Advance(1)
+    local first = decision(h).target
+    ok(first ~= nil and decision(sh).target == first, "next wipe: both aim at the same corpse first", tostring(first))
+    local second = (first == "Enhance") and "Tankman" or "Enhance"
+    -- the collision: the shaman clicks; in the half second before his cast bar is up the
+    -- priest's claim lands; his cast then starts on a corpse somebody is already on -> stopped
+    click(rezBtn(sh))
+    w:StartCast("Healbot", "Resurrection", first, 10)
+    w:Advance(0.1)
+    ok(sh.NS.Rez:ClaimedBy(first) == "Healbot", "the priest's claim arrived first")
+    w.stopped = {}
+    w.addonMsgs = {}
+    w:StartCast("Shammy", "Ancestral Spirit", first, 10)
+    ok((w.stopped.Shammy or 0) == 1, "the shaman's cast on the same corpse is stopped")
+    local mine = false
+    for _, m in ipairs(w.addonMsgs) do if string.find(m.msg, "|RCLAIM|" .. first, 1, true) then mine = true end end
+    ok(not mine, "and he sends no claim of his own")
+    ok(sh.NS.Rez:ClaimedBy(first) == "Healbot", "the priest keeps the corpse")
+    w:Advance(0.6)
+    ok(decision(sh).target == second, "the shaman's button is on the next corpse", tostring(decision(sh).target))
+    local said = false
+    for _, line in ipairs(sh.prints) do if string.find(line, "already rezzing", 1, true) then said = true end end
+    ok(said, "and says who has it")
+    -- the same cast when nobody else is on it: not stopped
+    w.stopped = {}
+    click(rezBtn(sh)); w:StartCast("Shammy", "Ancestral Spirit", second, 10)
+    ok((w.stopped.Shammy or 0) == 0, "no claim on the corpse: the cast runs")
+    ok(sh.NS.Rez:ClaimedBy(second) == nil and h.NS.Rez:ClaimedBy(second) == "Shammy", "and claims it for him")
+    w.dead = {}
+end
+
 section("40. cast-bar claims: rezzers without the addon, and 'don't release'")
 do
     local w = rezRaid({ { "Silent", "PRIEST", false, 2 } })      -- a priest without the addon

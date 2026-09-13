@@ -122,6 +122,7 @@ end)
 
 -- the rez module: a claim attaches when OUR cast starts, and lets go when it
 -- dies. Player-only where the client allows it.
+reg("UNIT_SPELLCAST_SENT",        function(unit, target, _, spellId) NS.Rez:OnCastSent(unit, target, spellId) end, "player")
 reg("UNIT_SPELLCAST_START",       function(unit, _, spellId) NS.Rez:OnCastStart(unit, spellId) end, "player")
 reg("UNIT_SPELLCAST_STOP",        function(unit, _, spellId) NS.Rez:OnCastStop(unit, spellId) end, "player")
 reg("UNIT_SPELLCAST_INTERRUPTED", function(unit, _, spellId) NS.Rez:OnCastInterrupted(unit, spellId) end, "player")
