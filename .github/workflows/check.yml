@@ -1,0 +1,10 @@
+# CI: every push and pull request runs _bisdev/check.sh BiSInnervate (the reusable workflow in bisdev).
+name: check
+on: [push, pull_request]
+jobs:
+  check:
+    uses: arnold891-eng/bisdev/.github/workflows/check.yml@main
+    with:
+      addon: BiSInnervate
+    secrets:
+      BISDEV_TOKEN: ${{ secrets.BISDEV_TOKEN }}
