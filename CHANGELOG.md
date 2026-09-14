@@ -1,5 +1,15 @@
 # BiS Innervate
 
+## 3.3.12
+
+- **Hotfix.** 3.3.11's collision stop called `SpellStopCasting()` - that function is PROTECTED
+  on this client (`ADDON_ACTION_FORBIDDEN`, raid night 13 Sep), so the cast was never stopped
+  and BugSack lit up. An addon may not cancel a cast; a click may. The rez macro now starts
+  with `/stopcasting`, the collision line says "click again to cancel and move on" (plus the
+  raid-warning sound), and the button is already on the next corpse - one more click cancels
+  the colliding cast and starts the right one. The harness now treats `SpellStopCasting` as
+  the client does: any call from addon code is a red mark. 619 checks.
+
 ## 3.3.11
 
 - Raid night 12 Sep (Arn + Lumi, both on Dumbleedore): two holes in the claim, both closed.

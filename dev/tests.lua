@@ -1212,7 +1212,7 @@ do
     w:Advance(1)
     local d = decision(h)
     ok(d.action == "rez" and d.target == "Shammy", "the shaman (a rezzer) goes before the mage and the warrior", tostring(d.target))
-    ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Shammy,nocombat] Resurrection", "the macro aims by NAME", rezBtn(h)._attrs["*macrotext1"])
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/stopcasting\n/cast [target=Shammy,nocombat] Resurrection", "the macro aims by NAME", rezBtn(h)._attrs["*macrotext1"])
     local act = h.NS.Window.con and h.NS.Window.con.slots.action
     ok(act and string.find(act.text, "Shammy", 1, true), "and the title bar says who is next", act and act.text)
     ok(rezBtn(h).glow:IsShown(), "the button pulses: there is a rez to do")
@@ -1273,7 +1273,7 @@ do
     w:Advance(0.6)
     ok(sh.NS.Rez:ClaimedBy("Kumlust") == "Healbot", "the cast starting claims the corpse on the shaman's client")
     ok(decision(sh).target == "Tankman", "and the shaman's button moved to the next corpse at once", tostring(decision(sh).target))
-    ok(rezBtn(sh)._attrs["*macrotext1"] == "/cast [target=Tankman,nocombat] Ancestral Spirit", "with the macro rebound", rezBtn(sh)._attrs["*macrotext1"])
+    ok(rezBtn(sh)._attrs["*macrotext1"] == "/stopcasting\n/cast [target=Tankman,nocombat] Ancestral Spirit", "with the macro rebound", rezBtn(sh)._attrs["*macrotext1"])
     ok(sh.NS.Rez:RezzersReady() == 2, "a rezzer mid-cast is not counted ready", sh.NS.Rez:RezzersReady())
     -- an unrelated interrupt of the priest's does not free it
     w.addonMsgs = {}
@@ -1324,10 +1324,12 @@ do
     w:StartCast("Healbot", "Resurrection", first, 10)
     w:Advance(0.1)
     ok(sh.NS.Rez:ClaimedBy(first) == "Healbot", "the priest's claim arrived first")
-    w.stopped = {}
+    w.forbidden = {}
     w.addonMsgs = {}
     w:StartCast("Shammy", "Ancestral Spirit", first, 10)
-    ok((w.stopped.Shammy or 0) == 1, "the shaman's cast on the same corpse is stopped")
+    ok((w.forbidden.Shammy or 0) == 0, "the addon never calls SpellStopCasting (protected: ADDON_ACTION_FORBIDDEN, 13 Sep)")
+    ok(w.casting.Shammy ~= nil, "so the cast keeps running - the client does not let us stop it")
+    ok(string.find(rezBtn(sh)._attrs["*macrotext1"] or "", "^/stopcasting\n"), "the button's macro starts with /stopcasting: the NEXT click cancels it", rezBtn(sh)._attrs["*macrotext1"])
     local mine = false
     for _, m in ipairs(w.addonMsgs) do if string.find(m.msg, "|RCLAIM|" .. first, 1, true) then mine = true end end
     ok(not mine, "and he sends no claim of his own")
@@ -1337,10 +1339,11 @@ do
     local said = false
     for _, line in ipairs(sh.prints) do if string.find(line, "already rezzing", 1, true) then said = true end end
     ok(said, "and says who has it")
-    -- the same cast when nobody else is on it: not stopped
-    w.stopped = {}
+    local again = false
+    for _, line in ipairs(sh.prints) do if string.find(line, "click again", 1, true) then again = true end end
+    ok(again, "and tells him the next click cancels it")
+    -- the same cast when nobody else is on it: claimed as before
     click(rezBtn(sh)); w:StartCast("Shammy", "Ancestral Spirit", second, 10)
-    ok((w.stopped.Shammy or 0) == 0, "no claim on the corpse: the cast runs")
     ok(sh.NS.Rez:ClaimedBy(second) == nil and h.NS.Rez:ClaimedBy(second) == "Shammy", "and claims it for him")
     w.dead = {}
 end
@@ -1494,7 +1497,7 @@ do
     ok(h.NS.Window.rezPending == true, "the rebind is waiting for the fight to end")
     w:SetCombat(false)
     w:Advance(1)
-    ok(not h.NS.Window.rezPending and rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Kumlust,nocombat] Resurrection", "and lands when it does", rezBtn(h)._attrs["*macrotext1"])
+    ok(not h.NS.Window.rezPending and rezBtn(h)._attrs["*macrotext1"] == "/stopcasting\n/cast [target=Kumlust,nocombat] Resurrection", "and lands when it does", rezBtn(h)._attrs["*macrotext1"])
     w.dead = {}
     w.hp, w.hpmax = {}, {}
 end
@@ -1517,7 +1520,7 @@ do
     w:Advance(1)
     ok(h.NS.Calls:For("Pyro", "REZ") ~= nil, "the priest's client has the call")
     ok(decision(h).target == "Pyro", "Pyro goes to the front of the line - ahead of the shaman", tostring(decision(h).target))
-    ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Pyro,nocombat] Resurrection", "and the priest's next click takes Pyro", rezBtn(h)._attrs["*macrotext1"])
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/stopcasting\n/cast [target=Pyro,nocombat] Resurrection", "and the priest's next click takes Pyro", rezBtn(h)._attrs["*macrotext1"])
     ok(rezBtn(py).sub:GetText() and string.find(rezBtn(py).sub:GetText(), "waiting", 1, true), "the mage's button says asked", rezBtn(py).sub:GetText())
     click(rezBtn(t)); w:Advance(1)
     ok(decision(h).target == "Pyro", "the warrior asks too: Pyro still first, he asked first", tostring(decision(h).target))
@@ -1543,10 +1546,10 @@ do
     ok(not rezBtn(h):IsShown(), "the pull starts: the button is gone")
     w.dead = { Kumlust = true }
     w:Advance(2)
-    ok(not rezBtn(h):IsShown() and rezBtn(h)._attrs["*macrotext1"] ~= "/cast [target=Kumlust,nocombat] Resurrection", "a death mid-fight changes nothing on screen or in the macro")
+    ok(not rezBtn(h):IsShown() and rezBtn(h)._attrs["*macrotext1"] ~= "/stopcasting\n/cast [target=Kumlust,nocombat] Resurrection", "a death mid-fight changes nothing on screen or in the macro")
     ok(not rezBtn(m):IsShown(), "the dead mage's ask button stays hidden too")
     w:SetCombat(false); w:Advance(1)
-    ok(rezBtn(h):IsShown() and rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Kumlust,nocombat] Resurrection", "fight over: it is back, aimed at the corpse")
+    ok(rezBtn(h):IsShown() and rezBtn(h)._attrs["*macrotext1"] == "/stopcasting\n/cast [target=Kumlust,nocombat] Resurrection", "fight over: it is back, aimed at the corpse")
     ok(rezBtn(m):IsShown(), "and the dead mage's ask button is back")
     w.dead = {}; w.hp, w.hpmax = {}, {}
     w:Advance(1)
@@ -1729,7 +1732,7 @@ do
     ok(rezBtn(h):IsShown() and shownBtns() == 1, "a corpse: the rez button is the only thing on screen")
     local _, _, _, rx = rezBtn(h):GetPoint()
     ok(rx == W.PAD, "sitting where the first button would", rx)
-    ok(rezBtn(h)._attrs["*macrotext1"] == "/cast [target=Kumlust,nocombat] Resurrection", "and aimed at the corpse")
+    ok(rezBtn(h)._attrs["*macrotext1"] == "/stopcasting\n/cast [target=Kumlust,nocombat] Resurrection", "and aimed at the corpse")
     w.dead = {}; w:Advance(1)
     ok(shownBtns() == 0, "corpse up: gone again")
     -- mutually exclusive with mages-only
