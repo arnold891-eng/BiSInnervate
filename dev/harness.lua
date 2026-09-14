@@ -396,10 +396,11 @@ function World:NewClient(name, class, hasAddon)
         return (world.incoming[n] or 0) + (world.myIncoming[n] or 0)
     end
     -- UnitCastingInfo's 5th return is when the cast lands, in ms
+    -- PROTECTED on 20506 (ADDON_ACTION_FORBIDDEN, 13 Sep): any call from addon code is a
+    -- red mark, and the cast is NOT stopped - exactly what the client does.
     env.SpellStopCasting = function()
-        world.stopped = world.stopped or {}
-        world.stopped[name] = (world.stopped[name] or 0) + 1
-        world.casting[name] = nil
+        world.forbidden = world.forbidden or {}
+        world.forbidden[name] = (world.forbidden[name] or 0) + 1
     end
     env.UnitCastingInfo = function(u)
         local n = resolve(u)

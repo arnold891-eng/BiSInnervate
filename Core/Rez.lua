@@ -1001,8 +1001,13 @@ end
 -- the pull - a max-rank Healing Wave meant for somebody else, landing on
 -- the shaman for 2900 overheal. Now the click does nothing in combat, full
 -- stop.
+-- /stopcasting first: when a collision is found at cast start (somebody else's claim landed
+-- in the half second before our cast bar), the addon cannot stop the cast itself -
+-- SpellStopCasting is PROTECTED on this client (ADDON_ACTION_FORBIDDEN, raid night 13 Sep).
+-- So the next click does it: the button is already on the next corpse, and its macro
+-- cancels the colliding cast on the way (a hardware event may). Harmless when nothing is casting.
 local function rezMacro(token, spell)
-    return "/cast [target=" .. token .. ",nocombat] " .. spell
+    return "/stopcasting\n/cast [target=" .. token .. ",nocombat] " .. spell
 end
 
 -- ONE target, no fallbacks. The old chain ([@mouseover][@target][@player])
@@ -1249,14 +1254,16 @@ function Rez:OnCastStart(unit, spell)
     if not self:IsRezSpell(spell) then return end
     local name = self.pending.name
     -- somebody else's claim landed between our click and our cast bar (the half-second the
-    -- button had not moved yet): stop this one, the button is already on the next corpse.
-    -- SpellStopCasting is not protected. (Raid night 12 Sep: Arn and Lumi both on Dumbleedore.)
+    -- button had not moved yet). The addon may NOT stop the cast (SpellStopCasting is protected
+    -- on 20506 - 3.3.11 tried and got ADDON_ACTION_FORBIDDEN, 13 Sep). Say so loudly, send no
+    -- claim, move the button on: its macro starts with /stopcasting, so one more click cancels
+    -- this cast and starts the next corpse. (Raid night 12 Sep: Arn and Lumi both on Dumbleedore.)
     local other = self:ClaimedBy(name)
     if other then
-        if SpellStopCasting then SpellStopCasting() end
         self.pending = nil
         self.report = nil
-        NS.Print(T.text("warn", NS.ClassColored(other) .. " is already rezzing " .. NS.ClassColored(name) .. " - stopped yours, moving on"))
+        NS.Print(T.text("warn", NS.ClassColored(other) .. " is already rezzing " .. NS.ClassColored(name) .. " - click again to cancel and move on"))
+        if PlaySound and SOUNDKIT and SOUNDKIT.RAID_WARNING then pcall(PlaySound, SOUNDKIT.RAID_WARNING, "Master") end
         self:Tick()
         if NS.Window then NS.Window:Refresh() end
         return
