@@ -1,5 +1,10 @@
 # BiS Innervate
 
+## 3.3.13
+
+- LibBiSComm minor 6: summon API moved to C_SummonInfo on 2.5.6 — the phantom-summon filter works again.
+- drum cooldown reads C_Container.GetItemCooldown.
+
 ## 3.3.12
 
 - **Hotfix.** 3.3.11's collision stop called `SpellStopCasting()` - that function is PROTECTED
