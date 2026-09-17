@@ -3,7 +3,7 @@
 ## Notes: One window for the whole raid: call for Innervate, Mana Tide, Bloodlust or Drums; druids click the face that pulses, the first click locks everyone else out. Healers get a one-click rez / heal / drink button that takes the rezzers first. Combat safe.
 ## Author: Kumlust
 ## OptionalDeps: BiSTheme, FojjiCore
-## Version: 3.3.12
+## Version: 3.3.13
 ## SavedVariables: BiSInnervateDB
 ## X-Category: Raid
 ## X-License: MIT
