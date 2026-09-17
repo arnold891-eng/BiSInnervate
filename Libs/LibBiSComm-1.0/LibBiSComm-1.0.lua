@@ -5,6 +5,11 @@
 --
 --   Wire format:  PROTO|MOD|CMD|a1|a2|...
 --
+-- Every field is escaped on the wire (minor 6) so a payload may carry "|" - an
+-- item link does: "\1" -> "\1\1", "|" -> "\1\2", undone on receipt. A field
+-- with neither byte is sent as-is, so CORE and SUMMON traffic is byte-identical
+-- to minor 5 and older copies still read it.
+--
 -- MOD is what lets unrelated addons share one prefix. An unknown MOD or CMD is
 -- ignored in silence, so a client running an older or newer BiS addon is never
 -- half-understood -- the same additive rule that let Rez fold into Innervate.
@@ -24,7 +29,7 @@
 --   * every host callback is pcall'd -- a lib fault cannot kill the addon
 --   * off means silent AND deaf
 
-local MAJOR, MINOR = "LibBiSComm-1.0", 5
+local MAJOR, MINOR = "LibBiSComm-1.0", 6
 
 local lib = _G.LibBiSComm
 if lib and (lib.MINOR or 0) >= MINOR then return end   -- an equal or newer copy won
@@ -38,6 +43,7 @@ lib.peers     = lib.peers     or {}    -- name -> peer table
 lib.handlers  = lib.handlers  or {}    -- mod -> cmd -> fn
 lib.callbacks = lib.callbacks or {}    -- event -> { fn, ... }
 lib.addons    = lib.addons    or {}    -- name -> version, what this client runs
+lib.guildMods = lib.guildMods or {}    -- mod -> true: may ride the GUILD channel (minor 6)
 if lib.enabled == nil then lib.enabled = true end
 
 lib.PREFIX = "BiS"
@@ -138,14 +144,56 @@ end
 
 function lib.VersionGT(a, b) return lib.VersionCmp(a, b) > 0 end
 
+-- MINOR 6: "|" inside a field. SEP is "|", and an item link is full of them, so a
+-- field is escaped before it is joined and unescaped after the split. Two bytes
+-- for "|", not one: with "|" -> "\1" alone, a field "||" and a field "\1" would
+-- both go out as "\1\1" and could never be told apart again.
+local ESC, PIPE = "\1", "\2"
+
+local function escape(s)
+    if not string.find(s, "[\1|]") then return s end
+    return (string.gsub(s, "[\1|]", function(ch)
+        if ch == ESC then return ESC .. ESC end
+        return ESC .. PIPE
+    end))
+end
+
+local function unescape(s)
+    if not string.find(s, ESC, 1, true) then return s end
+    return (string.gsub(s, "\1(.)", function(ch)
+        if ch == ESC then return ESC end
+        if ch == PIPE then return SEP end
+        return ch
+    end))
+end
+lib._escape, lib._unescape = escape, unescape
+
 local function split(msg)
     local out, i = {}, 1
     for piece in string.gmatch(msg .. SEP, "([^" .. SEP .. "]*)%" .. SEP) do
-        out[i] = piece; i = i + 1
+        out[i] = unescape(piece); i = i + 1
     end
     return out
 end
 lib._split = split
+
+-- MINOR 6: guild membership for guard 3 on the GUILD channel. Rebuilt lazily after
+-- GUILD_ROSTER_UPDATE; a name the roster does not list is refused, never guessed.
+function lib:InGuild(name)
+    name = Short(name)
+    if not name then return false end
+    if not (IsInGuild and IsInGuild()) then return false end
+    if self._guildDirty ~= false or not self._guild then
+        local roster = {}
+        local n = (GetNumGuildMembers and GetNumGuildMembers()) or 0
+        for i = 1, n do
+            local member = GetGuildRosterInfo and GetGuildRosterInfo(i)
+            if member then roster[Short(member)] = true end
+        end
+        self._guild, self._guildDirty = roster, false
+    end
+    return self._guild[name] == true
+end
 
 local function fire(event, ...)
     for _, fn in ipairs(lib.callbacks[event] or {}) do
@@ -205,6 +253,14 @@ function lib:RegisterHandler(mod, cmd, fn)
     self.handlers[mod][cmd] = fn
 end
 
+-- MINOR 6: a MOD that may ride the GUILD channel (BiSLoot's LOOT). CORE never can:
+-- HI / WHERE / SUM are about the group, and a guild line must not plant a peer.
+function lib:RegisterGuildMod(mod)
+    if not mod or mod == "CORE" then return false end
+    self.guildMods[mod] = true
+    return true
+end
+
 -- events: "PEER" (name, peer) | "WHERE" (name, where) | "SUM" (name, summon)
 function lib:RegisterCallback(event, fn)
     self.callbacks[event] = self.callbacks[event] or {}
@@ -228,24 +284,49 @@ end
 -- send / receive
 --------------------------------------------------------------------
 
+local GROUP_CHANNELS = { RAID = true, PARTY = true, INSTANCE_CHAT = true }
+
+-- The group: RAID / PARTY / INSTANCE_CHAT, whichever this client is in.
 function lib:Send(mod, cmd, ...)
+    return self:SendTo(nil, mod, cmd, ...)
+end
+
+-- MINOR 6: an explicit channel. nil = the group (as Send). "GUILD" only for a MOD
+-- registered with RegisterGuildMod - the guild reaches four raids at once, which is
+-- what BiSLoot's ledger sync needs and exactly what CORE must never do.
+function lib:SendTo(channel, mod, cmd, ...)
     if not self.enabled then return false end
     if not mod or not cmd then return false end
-    local parts = { PROTO, mod, cmd }
+    local chan
+    if channel == nil then
+        chan = GroupChannel()
+        if not chan then return false end
+    elseif channel == "GUILD" then
+        if not self.guildMods[mod] then
+            self._lastError = "not guild-scoped: " .. tostring(mod)
+            return false
+        end
+        if not (IsInGuild and IsInGuild()) then return false end
+        chan = "GUILD"
+    elseif GROUP_CHANNELS[channel] then
+        chan = channel
+    else
+        self._lastError = "channel not allowed: " .. tostring(channel)
+        return false
+    end
+    local parts = { PROTO, escape(tostring(mod)), escape(tostring(cmd)) }
     for i = 1, select("#", ...) do
         local v = select(i, ...)
         if v == nil then v = "" elseif type(v) == "boolean" then v = v and "1" or "0" end
-        parts[#parts + 1] = tostring(v)
+        parts[#parts + 1] = escape(tostring(v))
     end
     local msg = table.concat(parts, SEP)
     -- The client drops anything past 255 bytes and never tells the sender. Say
-    -- so instead of losing it silently.
+    -- so instead of losing it silently. Counted AFTER escaping: that is what goes out.
     if #msg > 250 then
         self._lastError = "message too long: " .. mod .. "/" .. cmd .. " " .. #msg
         return false
     end
-    local chan = GroupChannel()
-    if not chan then return false end
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
         C_ChatInfo.SendAddonMessage(PREFIX, msg, chan)
     elseif SendAddonMessage then
@@ -272,23 +353,35 @@ function lib:OnMessage(prefix, msg, channel, sender)
         if proto and proto > PROTO then self._sawNewer = true end
         return
     end
-    -- Guard 2: group channels only. A whisper from a stranger must not be able
-    -- to plant a position or a summon state.
-    if channel and channel ~= "RAID" and channel ~= "PARTY" and channel ~= "INSTANCE_CHAT" then
-        return
+    -- Guard 2: group channels only - or GUILD for a guild-scoped MOD (minor 6). A
+    -- whisper from a stranger must not be able to plant a position or a summon state,
+    -- and neither may a guild line: CORE is never guild-scoped.
+    local guild = (channel == "GUILD")
+    if channel and not GROUP_CHANNELS[channel] and not guild then return end
+    if guild and not self.guildMods[mod] then return end
+    -- Guard 3: a sender we can actually see - in the group, or for GUILD in the
+    -- guild roster (minor 6).
+    if sender ~= PlayerName() then
+        if guild then
+            if not self:InGuild(sender) then return end
+        elseif not UnitOf(sender) then
+            return
+        end
     end
-    -- Guard 3: a sender we can actually see in the group.
-    if sender ~= PlayerName() and not UnitOf(sender) then return end
     -- Guard 4: my own echo. The client hands every group addon message back to
     -- its sender too; taking it would make me my own peer (MINOR 2 did: a
     -- summoner at the stone counted himself twice - Arn, 8 Sep). What I know
     -- about myself lives in self.where / self.summon, never in peers.
     if sender == PlayerName() then return end
 
-    local isNew = (self.peers[sender] == nil)
-    local pr = peer(sender)
-    pr.seen = Now()
-    if isNew then fire("PEER", sender, pr) end
+    -- A guild sender is not a group peer: grids and summon lists are about the
+    -- group, and forty officers across four raids must not appear on them.
+    if not guild then
+        local isNew = (self.peers[sender] == nil)
+        local pr = peer(sender)
+        pr.seen = Now()
+        if isNew then fire("PEER", sender, pr) end
+    end
 
     local args = {}
     for i = 4, #p do args[i - 3] = p[i] end
@@ -462,10 +555,21 @@ function lib:SendSummon(state, summoner, area, left)
     return self:Send("CORE", "SUM", state, summoner or "", area or "", left or "")
 end
 
+-- MINOR 6: 2.5.6.69795 has these only at C_SummonInfo.* (BiSProbe, 16 Sep) - the
+-- globals minor 5 read are gone. C_SummonInfo first, the old globals as the fallback,
+-- looked up at call time in pair form (the API fence in _bisdev/audit reads that shape).
+local function SummonAPI()
+    local who  = (C_SummonInfo and C_SummonInfo.GetSummonConfirmSummoner) or GetSummonConfirmSummoner
+    local area = (C_SummonInfo and C_SummonInfo.GetSummonConfirmAreaName) or GetSummonConfirmAreaName
+    local left = (C_SummonInfo and C_SummonInfo.GetSummonConfirmTimeLeft) or GetSummonConfirmTimeLeft
+    return who, area, left
+end
+
 function lib:OnConfirmSummon()
-    local summoner = GetSummonConfirmSummoner and GetSummonConfirmSummoner() or ""
-    local area     = GetSummonConfirmAreaName and GetSummonConfirmAreaName() or ""
-    local left     = GetSummonConfirmTimeLeft and GetSummonConfirmTimeLeft() or OFFER_FALLBACK
+    local getWho, getArea, getLeft = SummonAPI()
+    local summoner = getWho and getWho() or ""
+    local area     = getArea and getArea() or ""
+    local left     = getLeft and getLeft() or OFFER_FALLBACK
     -- MINOR 5: the 2.5.x client fires CONFIRM_SUMMON on bystanders too (Arn, 10 Sep:
     -- "randomly if any other person gets a summon it says SUMMON by someone") - with
     -- no summoner, no area, no clock. That is not an offer to ME; announcing it as
@@ -485,13 +589,16 @@ function lib:OnConfirmSummon()
     end)
 end
 
--- Is there really a summon waiting on THIS client? The C API answers when it
--- exists; when it does not (old client), the event itself is all we have.
+-- Is there really a summon waiting on THIS client? Only the client's summon API can
+-- say. MINOR 6: when neither C_SummonInfo nor the old globals exist the answer is NO -
+-- minor 5 said yes there, and on 2.5.6.69795 (globals gone) that turned every
+-- bystander's CONFIRM_SUMMON back into a phantom OFFER.
 function lib:HasPendingSummon(summoner, area, left)
-    if not GetSummonConfirmSummoner then return true end
-    summoner = summoner or (GetSummonConfirmSummoner() or "")
-    area = area or (GetSummonConfirmAreaName and GetSummonConfirmAreaName() or "")
-    left = tonumber(left or (GetSummonConfirmTimeLeft and GetSummonConfirmTimeLeft())) or 0
+    local getWho, getArea, getLeft = SummonAPI()
+    if not getWho then return false end
+    summoner = summoner or (getWho() or "")
+    area = area or (getArea and getArea() or "")
+    left = tonumber(left or (getLeft and getLeft())) or 0
     return (summoner ~= "" or area ~= "" or left > 0) and true or false
 end
 
@@ -550,10 +657,13 @@ function lib:Boot()
     reg("GROUP_ROSTER_UPDATE")
     reg("CONFIRM_SUMMON")
     reg("CANCEL_SUMMON")
+    reg("GUILD_ROSTER_UPDATE")
 
     f:SetScript("OnEvent", function(_, event, a1, a2, a3, a4)
         if event == "CHAT_MSG_ADDON" then
             lib:OnMessage(a1, a2, a3, a4)
+        elseif event == "GUILD_ROSTER_UPDATE" then
+            lib._guildDirty = true
         elseif event == "CONFIRM_SUMMON" then
             lib:OnConfirmSummon()
         elseif event == "CANCEL_SUMMON" then
@@ -572,8 +682,12 @@ function lib:Boot()
         end
     end)
 
-    -- Accept has no event of its own; the popup calls ConfirmSummon().
-    if hooksecurefunc and type(_G.ConfirmSummon) == "function" then
+    -- Accept has no event of its own; the popup calls ConfirmSummon(). MINOR 6: on
+    -- 2.5.6.69795 that is C_SummonInfo.ConfirmSummon - minor 5 looked only for the
+    -- global, found nothing, and never saw an accept.
+    if hooksecurefunc and C_SummonInfo and C_SummonInfo.ConfirmSummon then
+        hooksecurefunc(C_SummonInfo, "ConfirmSummon", function() lib:OnConfirmed() end)
+    elseif hooksecurefunc and type(_G.ConfirmSummon) == "function" then
         hooksecurefunc("ConfirmSummon", function() lib:OnConfirmed() end)
     end
 end

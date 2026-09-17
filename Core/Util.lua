@@ -8,7 +8,7 @@ NS.ADDON       = ADDON or "BiSInnervate"
 -- is the TOC's; the literal is only for a client that cannot read metadata
 -- and dev/tests.lua holds it equal to the TOC
 NS.VERSION     = (C_AddOns and C_AddOns.GetAddOnMetadata and C_AddOns.GetAddOnMetadata(ADDON, "Version"))
-                 or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "3.3.12"
+                 or (GetAddOnMetadata and GetAddOnMetadata(ADDON, "Version")) or "3.3.13"
 NS.PROTOCOL    = 4      -- do NOT bump: other BiS addons (BiSGamba's RezComm) emit
                         -- RCLAIM/RDONE/RFREE on this number; a bump silences every one
 NS.PREFIX      = "BiSInn"
@@ -393,8 +393,11 @@ function NS.SpellCooldownFor(kind)
     if p and p.item then
         -- drums share one cooldown and it lives on the item
         local itemId = NS.MyDrum()
-        if not itemId or not GetItemCooldown then return 0 end
-        local ok, start, dur = pcall(GetItemCooldown, itemId)
+        -- 2.5.6.69795 has only C_Container.GetItemCooldown (BiSProbe, 16 Sep): the global
+        -- is the fallback. Minor sitting 16 Sep - drums read "ready" forever without this.
+        local getCooldown = (C_Container and C_Container.GetItemCooldown) or GetItemCooldown
+        if not itemId or not getCooldown then return 0 end
+        local ok, start, dur = pcall(getCooldown, itemId)
         if not ok or not start or start == 0 or not dur or dur <= 1.5 then return 0 end
         local left = (start + dur) - NS.Now()
         return left < 0 and 0 or left
