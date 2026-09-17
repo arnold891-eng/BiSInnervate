@@ -1,0 +1,24 @@
+# BiSInnervate :: release from GitHub (from _bisdev/ci/release-caller.yml).
+#
+#   push a tag vX.Y.Z (== the TOC's ## Version)   -> checks, zip, upload to CurseForge
+#   a pull request touching the release script,
+#   this file, the TOC or CHANGELOG.md            -> dry run: checks + zip, nothing uploaded
+#   Actions tab -> release -> Run workflow         -> dry run
+#
+# The work is in bisdev's reusable workflow (.github/workflows/release.yml).
+name: release
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+    paths: ['dev/release.ps1', '.github/workflows/release.yml', '*.toc', 'CHANGELOG.md']
+  workflow_dispatch:
+jobs:
+  release:
+    uses: arnold891-eng/bisdev/.github/workflows/release.yml@main
+    with:
+      addon: BiSInnervate
+      dry_run: ${{ github.event_name != 'push' }}
+    secrets:
+      BISDEV_TOKEN: ${{ secrets.BISDEV_TOKEN }}
+      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}

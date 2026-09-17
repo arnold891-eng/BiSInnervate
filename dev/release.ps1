@@ -30,7 +30,9 @@ $ErrorActionPreference = "Stop"
 $ProjectId = 1674333          # <-- put the CurseForge project id here
 $AddonName = "BiSInnervate"
 $Root      = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)   # ..\BiSInnervate
-$Downloads = Join-Path $env:USERPROFILE "Downloads"
+# On Arn's PC the zip lands in Downloads. GitHub's release workflow (bisdev .github/workflows/release.yml)
+# sets RELEASE_OUT instead - no Downloads folder on a build machine.
+$Downloads = if ($env:RELEASE_OUT) { $env:RELEASE_OUT } else { Join-Path $env:USERPROFILE "Downloads" }
 $TokenFile = Join-Path $Downloads "curseforge-token.txt"
 
 # version from the TOC
@@ -68,7 +70,7 @@ foreach ($k in $canon.Keys) {
 # the zip: everything but dev/, CLAUDE.md, .git* (.git, .github, .gitignore, .gitattributes)
 # and this repo's local leftovers - desk debt 28, 16 Sep 2026
 $zip = Join-Path $Downloads "$AddonName-$version.zip"
-$stage = Join-Path $env:TEMP "$AddonName-release"
+$stage = Join-Path ([System.IO.Path]::GetTempPath()) "$AddonName-release"   # $env:TEMP does not exist on Linux
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $stage $AddonName) | Out-Null
 Get-ChildItem $Root -Force | Where-Object {
@@ -86,8 +88,13 @@ if ((Test-Path $marker) -and -not $Force) {
 }
 
 if ($ProjectId -eq 0) { throw "set `$ProjectId at the top of this script first" }
-if (-not (Test-Path $TokenFile)) { throw "no token file at $TokenFile" }
-$token = (Get-Content $TokenFile -Raw).Trim()
+# GitHub's release workflow hands the token over as CURSEFORGE_TOKEN (a repo secret); on Arn's PC it is the file
+if ($env:CURSEFORGE_TOKEN) {
+    $token = $env:CURSEFORGE_TOKEN.Trim()
+} else {
+    if (-not (Test-Path $TokenFile)) { throw "no token file at $TokenFile" }
+    $token = (Get-Content $TokenFile -Raw).Trim()
+}
 $headers = @{ "X-Api-Token" = $token }
 
 # game version: the TBC Classic entry, whatever its id is this month
