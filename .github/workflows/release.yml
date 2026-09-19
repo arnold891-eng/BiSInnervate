@@ -1,11 +1,23 @@
-# BiSInnervate :: release from GitHub (from _bisdev/ci/release-caller.yml).
+# BiSInnervate :: release from GitHub (template: _bisdev/ci/release-caller.yml; sync with ci/sync.sh).
 #
 #   push a tag vX.Y.Z (== the TOC's ## Version)   -> checks, zip, upload to CurseForge
 #   a pull request touching the release script,
 #   this file, the TOC or CHANGELOG.md            -> dry run: checks + zip, nothing uploaded
-#   Actions tab -> release -> Run workflow         -> dry run
+#   Actions tab -> release -> Run workflow        -> dry run
 #
-# The work is in bisdev's reusable workflow (.github/workflows/release.yml).
+# The same order Arn's desk runs by hand, so a red addon can never ship:
+#   1. check.sh BiSInnervate - every suite, bislint, the API fence
+#   2. (real only) the tag must be v + the TOC's ## Version
+#   3. CurseForge accepts the token (a read-only call; the token is never printed)
+#   4. the addon's own dev/release.ps1 on pwsh, with RELEASE_OUT and CURSEFORGE_TOKEN set -
+#      the script reads those instead of Arn's Downloads folder and token file
+#   5. the zip is opened: no dev/, CLAUDE.md, .git* or a companion app's output inside
+#   6. the zip is kept as a workflow artifact (download it from the run page)
+#
+# These steps lived in bisdev's reusable workflow until the addons went public - see the long
+# note in ci/caller.yml for why a public repo cannot call a private one's workflow.
+#
+# Secrets on every addon repo: BISDEV_TOKEN (the private _bisdev checkout) and CURSEFORGE_TOKEN.
 name: release
 on:
   push:
@@ -15,10 +27,113 @@ on:
   workflow_dispatch:
 jobs:
   release:
-    uses: arnold891-eng/bisdev/.github/workflows/release.yml@main
-    with:
-      addon: BiSInnervate
-      dry_run: ${{ github.event_name != 'push' }}
-    secrets:
-      BISDEV_TOKEN: ${{ secrets.BISDEV_TOKEN }}
-      CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+    runs-on: ubuntu-latest
+    env:
+      ADDON: BiSInnervate
+      # the only `push` this workflow takes is a tag, so anything else is a dry run
+      DRY_RUN: ${{ github.event_name != 'push' }}
+    steps:
+      - name: the addon (at the tag, or the PR's commit)
+        uses: actions/checkout@v4
+        with:
+          path: AddOns/BiSInnervate
+      - name: _bisdev (check.sh, bislint, fence, the canonical libs)
+        uses: actions/checkout@v4
+        with:
+          repository: arnold891-eng/bisdev
+          token: ${{ secrets.BISDEV_TOKEN }}
+          path: AddOns/_bisdev
+      # skipped when the addon IS BiSTheme: the same path twice would check the PR's own code
+      # out and then overwrite it with BiSTheme's main, and the suite would grade the wrong tree
+      - name: BiSTheme (canonical Console.lua / Options.lua)
+        if: ${{ 'BiSInnervate' != 'BiSTheme' }}
+        uses: actions/checkout@v4
+        with:
+          repository: arnold891-eng/BiSTheme
+          token: ${{ secrets.BISDEV_TOKEN }}
+          path: AddOns/BiSTheme
+      - name: lua 5.1
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
+      - name: 1. check.sh - a red addon never ships
+        working-directory: AddOns
+        run: |
+          chmod +x _bisdev/check.sh
+          _bisdev/check.sh "$ADDON"
+      - name: 2. the tag is the TOC version
+        if: ${{ github.event_name == 'push' }}
+        run: |
+          v=$(grep -m1 '^## Version:' "AddOns/$ADDON/$ADDON.toc" | sed 's/^## Version:[[:space:]]*//' | tr -d '\r' | sed 's/[[:space:]]*$//')
+          if [ "$GITHUB_REF" != "refs/tags/v$v" ]; then
+            echo "refusing to release: $GITHUB_REF is not refs/tags/v$v (the TOC says $v)"
+            exit 1
+          fi
+          echo "tag v$v matches the TOC"
+      - name: 3. CurseForge accepts the token (read-only)
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: |
+          if [ -z "$CURSEFORGE_TOKEN" ]; then echo "no CURSEFORGE_TOKEN secret on this repo"; exit 1; fi
+          code=$(curl -s -o /dev/null -w '%{http_code}' -H "X-Api-Token: $CURSEFORGE_TOKEN" https://wow.curseforge.com/api/game/version-types)
+          if [ "$code" != "200" ]; then echo "CurseForge refused the token (HTTP $code)"; exit 1; fi
+          echo "CurseForge accepts the token"
+      - name: 3b. the flavours this TOC claims
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+        run: |
+          # An addon whose TOC lists 16001 ships for WoW Forever too, and CurseForge takes ITS OWN
+          # ids in gameVersions - never "1.60.1", never an interface number. release.ps1 adds the
+          # id; this step fails EARLY and in plain words when CurseForge has no id to add, rather
+          # than deep inside a PowerShell upload.
+          ifaces=$(grep -m1 '^##[[:space:]]*Interface[[:space:]]*:' "AddOns/$ADDON/$ADDON.toc" | sed 's/.*://' | tr -d '[:space:]')
+          echo "the TOC claims: $ifaces"
+          case ",$ifaces," in
+            *,16001,*) ;;
+            *) echo "TBC only - nothing to add"; exit 0 ;;
+          esac
+          pin=AddOns/_bisdev/release/versions.json
+          type=88568
+          [ -f "$pin" ] && type=$(jq -r '.typeId // 88568' "$pin")
+          id=$(curl -s -H "X-Api-Token: $CURSEFORGE_TOKEN" https://wow.curseforge.com/api/game/versions \
+               | jq -r --argjson t "$type" '[.[] | select(.gameVersionTypeID == $t) | select(.name | startswith("1.60"))] | sort_by(.name) | last | .id // empty')
+          if [ -z "$id" ] && [ -f "$pin" ]; then id=$(jq -r '.forever.id // empty' "$pin"); fi
+          if [ -z "$id" ]; then
+            echo "this TOC claims 16001 but CurseForge has no 1.60.x under type $type."
+            echo "run _bisdev/release/fetch-versions.ps1 and commit versions.json"
+            exit 1
+          fi
+          echo "forever game version id: $id"
+      - name: 4. zip (and upload, unless this is a dry run)
+        shell: pwsh
+        env:
+          CURSEFORGE_TOKEN: ${{ secrets.CURSEFORGE_TOKEN }}
+          RELEASE_OUT: ${{ runner.temp }}/release
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:RELEASE_OUT | Out-Null
+          $script = Join-Path $env:GITHUB_WORKSPACE "AddOns/$env:ADDON/dev/release.ps1"
+          if ($env:DRY_RUN -eq "true") {
+            Write-Host "DRY RUN - the zip is built and checked, nothing is uploaded"
+            & $script -ZipOnly
+          } else {
+            & $script -Type release
+          }
+      - name: 5. the zip holds game files only
+        run: |
+          zip=$(ls "$RUNNER_TEMP"/release/*.zip)
+          echo "$zip"
+          unzip -Z1 "$zip" | sed 's#\\#/#g' | awk -F/ '{print $2}' | sort -u | sed 's/^/  ships: /'
+          # dev/, the house rules and anything git. Plus, since 19 Sep 2026, a COMPANION APP'S
+          # OUTPUT: album.html, album-notes.json and screenshots. album.py writes into the
+          # client's Screenshots folder by default and nothing would have shipped - but --out
+          # takes any path, and a zip built minutes later would have carried the player's own
+          # pictures to CurseForge. Measured, not assumed: dropping the three into an addon
+          # folder put all three in the zip.
+          if unzip -Z1 "$zip" | sed 's#\\#/#g' |
+             grep -E '(^|/)(dev|CLAUDE\.md|\.git[^/]*|album\.html|album-notes\.json|WoWScrnShot_.*)(/|$)'; then
+            echo "the zip contains files it must not ship"
+            exit 1
+          fi
+      - name: 6. keep the zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: BiSInnervate-zip
+          path: ${{ runner.temp }}/release/*.zip
