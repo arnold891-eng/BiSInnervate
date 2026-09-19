@@ -1,53 +1,24 @@
 # CI for BiSInnervate (template: _bisdev/ci/caller.yml, BiSInnervate replaced; sync with ci/sync.sh).
 #
-# Every push and pull request lays the three folders out the way they sit on Arn's disk -
-# AddOns/BiSInnervate, AddOns/_bisdev, AddOns/BiSTheme - installs lua5.1 and runs
-# `_bisdev/check.sh BiSInnervate`: every dev suite, the embed-bytes asserts against canon,
-# bislint, the API fence. Red suite = red check on the commit.
+# Every push and pull request runs `_bisdev/check.sh BiSInnervate` - every dev suite, the
+# embed-bytes asserts against canon, bislint, the API fence - through the reusable workflow in
+# arnold891-eng/bis-ci.
 #
-# WHY THE STEPS ARE HERE AND NOT IN bisdev (19 Sep 2026). This was a nine-line caller into
-# bisdev's reusable workflow until the addons went public. A PUBLIC repository cannot use a
-# reusable workflow that lives in a PRIVATE one - no setting opens that door; bisdev's Actions
-# access was already "user" and every run still died before a single job started, with the only
-# words GitHub gives you: "This run likely failed because of a workflow file issue". Six repos
-# went red the minute they were flipped. bisdev stays private, so the steps come here instead.
+# WHY bis-ci AND NOT bisdev (19 Sep 2026). A PUBLIC repository cannot `uses:` a reusable workflow
+# that lives in a PRIVATE one. No setting opens it - bisdev's Actions access was already "user" -
+# and the run dies before a single job starts, with one line that names nothing: "This run likely
+# failed because of a workflow file issue". Seven repos went red the minute they were flipped.
+# bis-ci is public and holds ONLY those two workflows; bisdev stays private and is still cloned
+# by the job with BISDEV_TOKEN.
 #
-# The logic that changes is still in one place - _bisdev/check.sh, checked out below. What is
-# duplicated is the scaffolding, and ci/sync.sh rewrites every addon's copy from this file.
-#
-# _bisdev is private: the job's own GITHUB_TOKEN cannot read it. BISDEV_TOKEN is a repo secret
-# on every addon repo. A pull request FROM A FORK gets no secrets, so this job cannot pass for
-# an outside contributor - that was already true of the caller, and it is the price of a private
-# toolbox beside public addons.
+# A pull request FROM A FORK gets no secrets, so BISDEV_TOKEN is empty and this job cannot pass
+# for an outside contributor. That is the price of a private toolbox beside public addons.
 name: check
 on: [push, pull_request]
 jobs:
   check:
-    runs-on: ubuntu-latest
-    steps:
-      - name: the addon
-        uses: actions/checkout@v4
-        with:
-          path: AddOns/BiSInnervate
-      - name: _bisdev (check.sh, bislint, fence, the canonical libs)
-        uses: actions/checkout@v4
-        with:
-          repository: arnold891-eng/bisdev
-          token: ${{ secrets.BISDEV_TOKEN }}
-          path: AddOns/_bisdev
-      # skipped when the addon IS BiSTheme: the same path twice would check the PR's own code
-      # out and then overwrite it with BiSTheme's main, and the suite would grade the wrong tree
-      - name: BiSTheme (canonical Console.lua / Options.lua)
-        if: ${{ 'BiSInnervate' != 'BiSTheme' }}
-        uses: actions/checkout@v4
-        with:
-          repository: arnold891-eng/BiSTheme
-          token: ${{ secrets.BISDEV_TOKEN }}
-          path: AddOns/BiSTheme
-      - name: lua 5.1
-        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.1
-      - name: check.sh
-        working-directory: AddOns
-        run: |
-          chmod +x _bisdev/check.sh
-          _bisdev/check.sh BiSInnervate
+    uses: arnold891-eng/bis-ci/.github/workflows/check.yml@main
+    with:
+      addon: BiSInnervate
+    secrets:
+      BISDEV_TOKEN: ${{ secrets.BISDEV_TOKEN }}
