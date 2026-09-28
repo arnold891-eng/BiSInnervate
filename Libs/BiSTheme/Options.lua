@@ -132,7 +132,7 @@ end
 
 function P.fs(parent, text, size, name)
   local s = parent:CreateFontString(nil, "OVERLAY")
-  s:SetFont(STANDARD_TEXT_FONT, size or 8, "")
+  if T.SetFont then T.SetFont(s, size or 8) else s:SetFont(STANDARD_TEXT_FONT, size or 8, "") end
   local r, g, b = colour(name or "ink")
   s:SetTextColor(r, g, b, 1)
   s:SetText(text or "")
@@ -452,6 +452,12 @@ function T.Options(name, w, title)
     local listed = false
     for _, n in ipairs(UISpecialFrames) do if n == name then listed = true end end
     if not listed then table.insert(UISpecialFrames, name) end
+  end
+
+  -- AND IF THE LOOK CHANGES UNDER IT. A window built before the user moved EllesmereUI's accent
+  -- slider has the old colour baked into its textures; Paint() re-reads the palette for every row.
+  if T.RegisterLooks then
+    T.RegisterLooks(function() if f:IsShown() then f:Paint() end end)
   end
 
   if f.con then

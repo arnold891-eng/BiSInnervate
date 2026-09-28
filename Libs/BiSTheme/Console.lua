@@ -102,7 +102,10 @@ function T.Console(fs, opts)
   c.idx, c.since = 1, GetTime()
   fs:SetText(T.text("accent", D.prompt))
   local w = fs:GetParent():CreateFontString(nil, "OVERLAY")
-  w:SetFont(STANDARD_TEXT_FONT, opts.size or D.size, "")
+  -- THE USER'S FONT WHEN ONE IS LENT. T.SetFont is BiSTheme's, and falls back to the client's own
+  -- when there is no lender or the path is refused - a FontString whose SetFont failed draws
+  -- nothing at all, which is an invisible label rather than an ugly one.
+  if T.SetFont then T.SetFont(w, opts.size or D.size) else w:SetFont(STANDARD_TEXT_FONT, opts.size or D.size, "") end
   w:SetPoint("LEFT", fs, "RIGHT", 0, 0)
   w:SetText("")
   c.words = w
@@ -111,7 +114,7 @@ function T.Console(fs, opts)
   -- words text, and on the client that swap moved the words a hair every half
   -- second (Arn, on the Healing plate: "Heal_ moves like one space forward").
   local cur = fs:GetParent():CreateFontString(nil, "OVERLAY")
-  cur:SetFont(STANDARD_TEXT_FONT, opts.size or D.size, "")
+  if T.SetFont then T.SetFont(cur, opts.size or D.size) else cur:SetFont(STANDARD_TEXT_FONT, opts.size or D.size, "") end
   cur:SetPoint("LEFT", w, "RIGHT", 0, 0)
   cur:SetText(T.text("ink2", "_"))
   c.cur = cur
