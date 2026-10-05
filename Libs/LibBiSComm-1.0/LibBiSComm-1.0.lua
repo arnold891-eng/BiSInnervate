@@ -29,7 +29,7 @@
 --   * every host callback is pcall'd -- a lib fault cannot kill the addon
 --   * off means silent AND deaf
 
-local MAJOR, MINOR = "LibBiSComm-1.0", 6
+local MAJOR, MINOR = "LibBiSComm-1.0", 7
 
 local lib = _G.LibBiSComm
 if lib and (lib.MINOR or 0) >= MINOR then return end   -- an equal or newer copy won
@@ -71,8 +71,23 @@ local function After(delay, fn)
     return false
 end
 
+-- A VALUE THE CLIENT WILL NOT LET US LOOK AT (4 Oct 2026). On WoW Forever a string handed to an
+-- addon can be a SECRET VALUE: it is truthy, so `if not v` lets it straight through, and it errors
+-- the moment anything reads it - a match, a comparison, or being used as a table key.
+--
+-- Feature-detected, never version-checked: Forever carries a modern API behind a 1.60 interface
+-- number, so "does this client have the call" is the only honest question. A client without it has
+-- no secret values and this is always false.
+local function Secret(v)
+    return issecretvalue ~= nil and issecretvalue(v) == true
+end
+lib.Secret = Secret
+
+-- GUARDED HERE, so every caller is guarded at once. Short() takes names from UnitName() as well as
+-- from the wire, and on this client both can come back secret inside an instance. A nil is the
+-- honest answer: we do not know who that is, and every caller already handles not knowing.
 local function Short(name)
-    if not name then return nil end
+    if name == nil or Secret(name) or type(name) ~= "string" then return nil end
     return string.match(name, "^([^%-]+)") or name
 end
 lib.Short = Short
@@ -339,7 +354,21 @@ end
 
 function lib:OnMessage(prefix, msg, channel, sender)
     if not self.enabled then return end
-    if prefix ~= PREFIX or not msg then return end
+    -- EVERY ARGUMENT, BEFORE ANYTHING READS ONE (4 Oct 2026). CHAT_MSG_ADDON hands over four
+    -- values and on this client any of them can be a secret: seen in a dungeon, where the client
+    -- hides chat. A secret is truthy, so `not msg` never caught it - the error arrived further
+    -- down, out of `split(msg)` or out of using the sender as a table key, and OnEvent does not
+    -- pcall, so it landed on the player's screen as a red wall in the middle of a pull.
+    --
+    -- BiSMemories shipped 0.5.1 to fix exactly this shape one layer up, in CHAT_MSG_LOOT. It was
+    -- still here underneath, in the lib seven addons embed. Found 4 Oct in FojjiCore's dungeon
+    -- journal, which guards its text AND its sender - the sender being the half nobody here had
+    -- thought of.
+    --
+    -- Nothing hidden is worth answering: a message we may not read is not a message, and a peer we
+    -- may not name cannot be put in the table. Dropping it is the whole fix.
+    if Secret(prefix) or Secret(msg) or Secret(channel) or Secret(sender) then return end
+    if prefix ~= PREFIX or type(msg) ~= "string" then return end
     sender = Short(sender)
     if not sender then return end
 
