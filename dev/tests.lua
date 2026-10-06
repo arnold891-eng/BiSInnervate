@@ -2111,7 +2111,7 @@ do
     local w = rezRaid()
     local m = w.clients.Kumlust
     local lib = m.env.LibBiSComm
-    ok(lib ~= nil and lib.MINOR == 7, "LibBiSComm is embedded, minor 7", lib and lib.MINOR)
+    ok(lib ~= nil and lib.MINOR == 8, "LibBiSComm is embedded, minor 8", lib and lib.MINOR)
     ok(lib._booted == true, "it boots from PLAYER_LOGIN")
     local tocVer = m.env.GetAddOnMetadata("BiSInnervate", "Version")
     ok(lib.addons and lib.addons.BiSInnervate == tocVer, "the addon is registered with the TOC's version, not a literal", lib.addons and lib.addons.BiSInnervate, tocVer)

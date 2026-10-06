@@ -29,7 +29,7 @@
 --   * every host callback is pcall'd -- a lib fault cannot kill the addon
 --   * off means silent AND deaf
 
-local MAJOR, MINOR = "LibBiSComm-1.0", 7
+local MAJOR, MINOR = "LibBiSComm-1.0", 8
 
 local lib = _G.LibBiSComm
 if lib and (lib.MINOR or 0) >= MINOR then return end   -- an equal or newer copy won
@@ -342,14 +342,136 @@ function lib:SendTo(channel, mod, cmd, ...)
         self._lastError = "message too long: " .. mod .. "/" .. cmd .. " " .. #msg
         return false
     end
+    return self:_Queue(msg, chan)
+end
+
+--------------------------------------------------------------------
+-- THE OUTBOX (minor 8, 6 Oct 2026)
+--
+-- Until minor 7 every Send went straight to the client and its answer was never read. Overlord
+-- measured the client on Forever (27 Sep): about ONE addon message a second PER PREFIX, shared by
+-- group, raid and channel together; past that the send answers a throttle code and the message
+-- simply does not leave. Eight BiS addons share this lib's one prefix, so they share that one
+-- message a second - and a fight's worth of HI, WHERE and answers was being lost with no error
+-- anywhere. Chat lockdown (InChatMessagingLockdown) refuses everything for a while besides.
+--
+-- So: one queue for the whole client (the lib is loaded ONCE however many addons embed it), one
+-- message per SEND_GAP, the client's answer read every time. A throttle puts the message back at
+-- the head and waits; lockdown holds the queue until it lifts; any other refusal is dropped and
+-- said in _lastError. An old message is thrown away rather than sent late - a WHERE from half a
+-- minute ago is a lie about where somebody is. The same line already waiting is not queued twice.
+--
+-- Send still answers true for "accepted", which now means "queued": the first one in a quiet
+-- second still leaves at once.
+--------------------------------------------------------------------
+
+local SEND_GAP   = 1.0    -- seconds between two of OUR messages; the client allows about one.
+                          -- lib.sendGap overrides it: a host SUITE about something else may set 0
+local SEND_TTL   = 30     -- a message older than this is stale and dropped, not sent
+local OUTBOX_MAX = 40     -- past this a new message is refused, not queued
+
+lib.outbox = lib.outbox or {}
+lib.nextSendAt = lib.nextSendAt or 0
+lib.sentCount, lib.refusedCount = lib.sentCount or 0, lib.refusedCount or 0
+
+-- The client's answer, by NAME where it has the enum (our census does not record Enum tables, so
+-- Forever's numbers are unverified). Retail's numbers, which FojjiCore retries on, are the fallback.
+local function ResultKind(r)
+    if r == nil or r == true or r == 0 then return "sent" end     -- 2.5.x answers nothing
+    if Secret(r) then return "sent" end
+    if r == false then return "again" end
+    local E = Enum and Enum.SendAddonMessageResult
+    local throttle, channel, general = 3, 8, 9
+    if type(E) == "table" then
+        throttle = E.AddonMessageThrottle or throttle
+        channel  = E.ChannelThrottle or channel
+        general  = E.GeneralError or general
+    end
+    if r == throttle or r == channel or r == general then return "again" end
+    return "refused"
+end
+
+local function clear(t) for i = #t, 1, -1 do t[i] = nil end end
+
+local function ChatLocked()
+    local f = C_ChatInfo and C_ChatInfo.InChatMessagingLockdown
+    if not f then return false end
+    local ok, v = pcall(f)
+    if not ok or Secret(v) then return false end
+    return v and true or false
+end
+
+local function RawSend(msg, chan)
     if C_ChatInfo and C_ChatInfo.SendAddonMessage then
-        C_ChatInfo.SendAddonMessage(PREFIX, msg, chan)
+        return true, C_ChatInfo.SendAddonMessage(PREFIX, msg, chan)
     elseif SendAddonMessage then
-        SendAddonMessage(PREFIX, msg, chan)
-    else
+        return true, SendAddonMessage(PREFIX, msg, chan)
+    end
+    return false
+end
+
+function lib:_Queue(msg, chan)
+    local q = self.outbox
+    for _, m in ipairs(q) do
+        if m.msg == msg and m.chan == chan then return true end    -- already waiting
+    end
+    if #q >= OUTBOX_MAX then
+        self._lastError = "outbox full: " .. #q .. " waiting"
         return false
     end
+    q[#q + 1] = { msg = msg, chan = chan, at = Now() }
+    self:_Pump()
     return true
+end
+
+function lib:_Arm(delay)
+    if self._pumpArmed then return end
+    if After(math.max(delay, 0.05), function() lib._pumpArmed = false; lib:_Pump() end) then
+        self._pumpArmed = true
+    end
+end
+
+function lib:_Pump()
+    local q = self.outbox
+    local gap = tonumber(self.sendGap) or SEND_GAP
+    while #q > 0 do
+        if not self.enabled then clear(q); return end
+        local now = Now()
+        -- the clock went BACKWARDS under us (a harness rewinding GetTime; the client never does):
+        -- a wait longer than any backoff we set is not a wait, it is a broken clock - send now
+        if self.nextSendAt - now > 2 * gap then self.nextSendAt = now end
+        if q[1].at > now then q[1].at = now end
+        if now - q[1].at > SEND_TTL then
+            table.remove(q, 1)
+            self._lastError = "dropped a stale message"
+        elseif ChatLocked() then
+            self:_Arm(SEND_GAP)
+            return
+        elseif now < self.nextSendAt then
+            self:_Arm(self.nextSendAt - now)
+            return
+        else
+            local m = q[1]
+            local can, r = RawSend(m.msg, m.chan)
+            if not can then clear(q); return end
+            local kind = ResultKind(r)
+            if kind == "again" then
+                -- it did NOT leave: keep it at the head and back off a little further
+                self.refusedCount = self.refusedCount + 1
+                self.nextSendAt = now + 2 * gap
+                self:_Arm(2 * gap)
+                return
+            end
+            table.remove(q, 1)
+            self.nextSendAt = now + gap
+            if kind == "sent" then
+                self.sentCount = self.sentCount + 1
+            else
+                self.refusedCount = self.refusedCount + 1
+                self._lastError = "the client refused a message (" .. tostring(r) .. ")"
+            end
+        end
+    end
 end
 
 function lib:OnMessage(prefix, msg, channel, sender)

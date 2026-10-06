@@ -73,9 +73,10 @@ $zip = Join-Path $Downloads "$AddonName-$version.zip"
 $stage = Join-Path ([System.IO.Path]::GetTempPath()) "$AddonName-release"   # $env:TEMP does not exist on Linux
 if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Path (Join-Path $stage $AddonName) | Out-Null
-Get-ChildItem $Root -Force | Where-Object {
-    $_.Name -notin @("dev", "CLAUDE.md", ".pkgmeta", "LICENSE.bak", "Claude outputs") -and $_.Name -notlike ".git*"
-} | ForEach-Object { Copy-Item $_.FullName -Destination (Join-Path $stage $AddonName) -Recurse }
+# Only what git TRACKS ships, minus the dev side - one shared list for every addon, in
+# _bisdev/release/stage.ps1. A file nobody committed cannot reach CurseForge however it got into
+# this folder (6 Oct 2026: FojjiCore shipped a "Claude outputs" folder the night before).
+& (Join-Path $Root "..\_bisdev\release\stage.ps1") -Root $Root -Dest (Join-Path $stage $AddonName)
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $stage $AddonName) -DestinationPath $zip
 Write-Host "zip: $zip"
