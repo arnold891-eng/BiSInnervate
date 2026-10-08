@@ -1964,7 +1964,7 @@ do
     ok(#list > 1 and withAddon == #list, "the online list is everyone with the addon, me included", #list, withAddon)
     ok(list[1].name == "Kumlust", "and I am first", list[1].name)
     -- the console is the real embedded one, loaded the TOC way (not a fallback)
-    ok(con ~= nil and m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR == 4, "the header carries the BiS> console, Console.lua minor 4 (cursor is its own FontString)", m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR)
+    ok(con ~= nil and m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR == 5, "the header carries the BiS> console, Console.lua minor 5 (cursor is its own FontString)", m.env.BiSTheme and m.env.BiSTheme.CONSOLE_MINOR)
     ok(W.title:GetText() == m.NS.T.text("accent", "BiS> "), "the title itself is the prompt", W.title:GetText())
     -- the accent is read from the theme per call, never captured: under
     -- dev/theme.lua the wrong-on-purpose accent must show through everywhere
@@ -2111,7 +2111,7 @@ do
     local w = rezRaid()
     local m = w.clients.Kumlust
     local lib = m.env.LibBiSComm
-    ok(lib ~= nil and lib.MINOR == 8, "LibBiSComm is embedded, minor 8", lib and lib.MINOR)
+    ok(lib ~= nil and lib.MINOR == 9, "LibBiSComm is embedded, minor 9", lib and lib.MINOR)
     ok(lib._booted == true, "it boots from PLAYER_LOGIN")
     local tocVer = m.env.GetAddOnMetadata("BiSInnervate", "Version")
     ok(lib.addons and lib.addons.BiSInnervate == tocVer, "the addon is registered with the TOC's version, not a literal", lib.addons and lib.addons.BiSInnervate, tocVer)

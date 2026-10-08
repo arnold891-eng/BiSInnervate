@@ -29,7 +29,8 @@
 --   * every host callback is pcall'd -- a lib fault cannot kill the addon
 --   * off means silent AND deaf
 
-local MAJOR, MINOR = "LibBiSComm-1.0", 8
+-- minor 9 (7 Oct 2026): the cost pass - one roster walk per roster tick, the prefix asked first
+local MAJOR, MINOR = "LibBiSComm-1.0", 9
 
 local lib = _G.LibBiSComm
 if lib and (lib.MINOR or 0) >= MINOR then return end   -- an equal or newer copy won
@@ -248,9 +249,15 @@ function lib:HasLib(name)
     return self.peers[name] ~= nil
 end
 
+-- ONE WALK OF THE ROSTER, NOT ONE PER PEER (7 Oct 2026). This asked UnitOf about every peer,
+-- and UnitOf walks the whole raid: ~1,000 roster questions a tick in a 25-man, ~4,700 in a 40,
+-- on an event that comes in bursts. Walk once into a set, then look each peer up in it.
 function lib:PurgeAbsent()
+    local here = {}
+    ForEachMember(function(_, n) if n and not Secret(n) then here[n] = true end end)
+    local me = PlayerName()
     for name in pairs(self.peers) do
-        if not UnitOf(name) then self.peers[name] = nil end
+        if name ~= me and not here[name] then self.peers[name] = nil end
     end
 end
 
@@ -489,8 +496,11 @@ function lib:OnMessage(prefix, msg, channel, sender)
     --
     -- Nothing hidden is worth answering: a message we may not read is not a message, and a peer we
     -- may not name cannot be put in the table. Dropping it is the whole fix.
-    if Secret(prefix) or Secret(msg) or Secret(channel) or Secret(sender) then return end
-    if prefix ~= PREFIX or type(msg) ~= "string" then return end
+    -- the PREFIX first (7 Oct 2026, the cost pass): every addon's messages come through here, and
+    -- a raid's worth of them is hundreds a second - one question decides "not ours", not four
+    if Secret(prefix) or prefix ~= PREFIX then return end
+    if Secret(msg) or Secret(channel) or Secret(sender) then return end
+    if type(msg) ~= "string" then return end
     sender = Short(sender)
     if not sender then return end
 
