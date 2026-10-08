@@ -38,8 +38,9 @@
 
 BiSTheme = BiSTheme or {}
 local T = BiSTheme
-if (T.CONSOLE_MINOR or 0) >= 4 then return end
-T.CONSOLE_MINOR = 4      -- 4: the cursor is its own FontString, blinked by alpha -- the words never move (11 Sep 2026)
+if (T.CONSOLE_MINOR or 0) >= 5 then return end
+T.CONSOLE_MINOR = 5      -- 5: Paint sets and measures the words only when they change (7 Oct 2026, the cost pass)
+                         -- 4: the cursor is its own FontString, blinked by alpha -- the words never move (11 Sep 2026)
                          -- 3: a toggled slot no longer re-appends itself to the rotation
 
 -- palette fallback: only when this file is embedded and BiSTheme.lua never ran
@@ -223,11 +224,19 @@ function Con:Paint()
   local blink = math.floor(now * 2) % 2 == 0
   self.curOn = blink
   self.cur:SetAlpha(blink and 1 or 0)     -- the cursor blinks; the words stay put
+  -- ONLY WHEN IT CHANGED (7 Oct 2026, the cost pass). Three windows paint this every frame, and
+  -- each paint set the text, measured it, and - when it overflowed - trimmed a character at a
+  -- time with a SetText and a measure for each. The words change every few seconds; the alpha
+  -- above is all a frame needs. The key holds the colour as drawn, so a theme change repaints.
+  local room = self.width and (self.width - (self.curW or 0) - (self.promptW or 0)) or 0
+  local key = shown and (room .. "\1" .. T.text(shown.colour, shown.text)) or ""
+  if key == self.painted then return end
+  self.painted = key
   local words = shown and shown.text or ""
   if self.width and shown then
     -- trim the plain words only (never inside a colour escape); prompt and
     -- cursor keep their own width outside the trim
-    words = T.Fit(self.words, words, self.width - (self.curW or 0) - (self.promptW or 0))
+    words = T.Fit(self.words, words, room)
   end
   self.words:SetText(shown and T.text(shown.colour, words) or "")
 end
